@@ -153,7 +153,6 @@ const isLogicallyGuaranteedMine = (grid: CellData[][], r: number, c: number): bo
 // --- TRUE CURSED LOGIC HELPERS ---
 
 // Check if the current board state is valid regarding all revealed numbers
-// We only need to check the neighbors of the cells we modified (source and target)
 const isValidStateAround = (grid: CellData[][], cellsToCheck: {r: number, c: number}[]) => {
     for (const cell of cellsToCheck) {
         // Get all neighbors of this modified cell
@@ -230,6 +229,33 @@ const attemptStrictKill = (grid: CellData[][], targetRow: number, targetCol: num
     return false;
 };
 
+// --- CHORDING HELPER ---
+export const getChordTargets = (grid: CellData[][], r: number, c: number): {r: number, c: number}[] => {
+    const cell = grid[r][c];
+    if (cell.status !== 'revealed' || cell.neighborMines === 0) return [];
+    
+    let flagCount = 0;
+    const hiddenNeighbors: {r: number, c: number}[] = [];
+
+    DIRECTIONS.forEach(([dr, dc]) => {
+        const nr = r + dr;
+        const nc = c + dc;
+        if (nr >= 0 && nr < grid.length && nc >= 0 && nc < grid[0].length) {
+            const neighbor = grid[nr][nc];
+            if (neighbor.status === 'flagged') {
+                flagCount++;
+            } else if (neighbor.status === 'hidden') {
+                hiddenNeighbors.push({r: nr, c: nc});
+            }
+        }
+    });
+
+    if (flagCount === cell.neighborMines) {
+        return hiddenNeighbors;
+    }
+    return [];
+}
+
 export const revealCellLogic = (
   grid: CellData[][], 
   row: number, 
@@ -252,48 +278,32 @@ export const revealCellLogic = (
          // Prayer Logic: Try to SAVE the player
          if (newGrid[row][col].isMine) {
              moveMineToSafeSpot(newGrid, row, col);
-             // Verify we actually saved them (might fail if map is 100% full, unlikely)
              if (!newGrid[row][col].isMine) {
                  prayerConsumed = true;
              }
          } else {
-             // Was safe anyway, consume prayer for the "safety check"
+             // Was safe anyway, consume prayer
              prayerConsumed = true;
          }
      } else {
          // Punishment Logic: Try to KILL the player
          if (newGrid[row][col].isMine) {
-             // Already dead, nothing to do.
+             // Already dead
          } else {
-             // Try to find a valid configuration where this cell is a mine
              const killed = attemptStrictKill(newGrid, row, col);
-             if (killed) {
-                 // We successfully moved a mine here.
-                 // Execution continues below to "Standard Mine Hit Logic"
-             } else {
-                 // We failed to kill the player. Math saved them.
-                 // This means the cell is logically guaranteed to be safe.
-             }
+             // if killed is true, execution continues to mine hit logic
          }
      }
   }
-  // --- END CURSED LOGIC ---
-
 
   // --- STANDARD MINE HIT LOGIC ---
   if (newGrid[row][col].isMine) {
-    // If we are here in strict mode w/o prayer, we are dead.
-    // If classic mode, or prayer failed to move mine (logic lock), we check constraints.
-
     if (isPraying) { 
-        // This block is mostly for Classic Mode + Prayer, 
-        // or Strict Mode where moveMineToSafeSpot failed (super rare).
         if (isLogicallyGuaranteedMine(newGrid, row, col)) {
             newGrid[row][col].status = 'revealed';
             newGrid[row][col].isExploded = true;
             return { grid: newGrid, exploded: true, prayerConsumed: true };
         } else {
-            // Last ditch save attempt
             moveMineToSafeSpot(newGrid, row, col);
             if (!newGrid[row][col].isMine) {
                 prayerConsumed = true;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Trophy, Bomb } from 'lucide-react';
+import { Trophy, Bomb, Eye } from 'lucide-react';
 import { GameStatus } from '../types';
 
 interface ModalProps {
@@ -8,9 +8,10 @@ interface ModalProps {
   time: number;
   isBestTime?: boolean;
   onRestart: () => void;
+  onClose?: () => void;
 }
 
-export const Modal: React.FC<ModalProps> = ({ status, time, isBestTime, onRestart }) => {
+export const Modal: React.FC<ModalProps> = ({ status, time, isBestTime, onRestart, onClose }) => {
   if (status !== 'won' && status !== 'lost') return null;
 
   const isWin = status === 'won';
@@ -46,15 +47,27 @@ export const Modal: React.FC<ModalProps> = ({ status, time, isBestTime, onRestar
             : 'Better luck next time. Watch your step!'}
         </p>
 
-        <button
-          onClick={onRestart}
-          className={`
-            w-full py-3 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95
-            ${isWin ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-slate-600 hover:bg-slate-500'}
-          `}
-        >
-          Play Again
-        </button>
+        <div className="space-y-3">
+            <button
+            onClick={onRestart}
+            className={`
+                w-full py-3 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95
+                ${isWin ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-slate-600 hover:bg-slate-500'}
+            `}
+            >
+            Play Again
+            </button>
+            
+            {onClose && (
+                <button
+                    onClick={onClose}
+                    className="w-full py-3 rounded-xl font-bold text-slate-300 hover:text-white hover:bg-slate-700 transition-colors flex items-center justify-center gap-2"
+                >
+                    <Eye size={18} />
+                    Review Board
+                </button>
+            )}
+        </div>
       </motion.div>
     </div>
   );

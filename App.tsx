@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings, Trophy, Skull } from 'lucide-react';
 import { GameState, Difficulty, CellData, GameStatus, GameMode } from './types';
-import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin } from './utils/gameLogic';
+import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets } from './utils/gameLogic';
 import { saveGameRecord, isNewBest } from './utils/storage';
 import { Board } from './components/Board';
 import { GameHeader } from './components/GameHeader';
@@ -36,6 +36,7 @@ const App: React.FC = () => {
   });
 
   const [isBestTime, setIsBestTime] = useState(false);
+  const [isGameOverModalOpen, setIsGameOverModalOpen] = useState(false);
   const [timerInterval, setTimerInterval] = useState<number | null>(null);
 
   // --- Drag to Scroll State ---
@@ -59,6 +60,7 @@ const App: React.FC = () => {
     });
     setTimerInterval(null);
     setIsBestTime(false);
+    setIsGameOverModalOpen(false);
     
     // Center the board on init if possible
     if (scrollContainerRef.current) {
@@ -94,6 +96,15 @@ const App: React.FC = () => {
     };
   }, [gameState.status, timerInterval]);
 
+  // Handle Game Over Modal Visibility
+  useEffect(() => {
+    if (gameState.status === 'won' || gameState.status === 'lost') {
+        setIsGameOverModalOpen(true);
+    } else {
+        setIsGameOverModalOpen(false);
+    }
+  }, [gameState.status]);
+
   const handleTogglePrayer = () => {
       if (gameState.status !== 'playing' && gameState.status !== 'idle') return;
       if (gameState.prayersLeft <= 0 && !gameState.isPraying) return;
@@ -110,7 +121,8 @@ const App: React.FC = () => {
 
     let newGrid = [...gameState.grid];
     let newStatus: GameStatus = gameState.status;
-    let isFirstClick = false;
+    let newPrayersLeft = gameState.prayersLeft;
+    let newIsPraying = gameState.isPraying;
 
     const cell = newGrid[row][col];
 
@@ -120,36 +132,66 @@ const App: React.FC = () => {
     if (gameState.status === 'idle') {
       newGrid = placeMines(newGrid, gameState.difficulty.mines, row, col);
       newStatus = 'playing';
-      isFirstClick = true;
     }
 
-    // Reveal Logic
-    const { grid: revealedGrid, exploded, prayerConsumed } = revealCellLogic(
-      newGrid, 
-      row, 
-      col, 
-      gameState.mode, 
-      isFirstClick,
-      gameState.isPraying
-    );
-    newGrid = revealedGrid;
+    // Logic for Revealed vs Hidden cells
+    if (cell.status === 'revealed') {
+        // --- CHORDING LOGIC ---
+        const targets = getChordTargets(newGrid, row, col);
+        
+        for (const target of targets) {
+            // Apply reveal logic to each target
+            // NOTE: Strict mode punishment applies to EACH cell individually during chording
+            const result = revealCellLogic(
+                newGrid, 
+                target.r, 
+                target.c, 
+                gameState.mode, 
+                false, // Never first click for chording
+                newIsPraying
+            );
+            newGrid = result.grid; // Update grid reference for next iteration
 
-    // Manage Prayer State
-    let newPrayersLeft = gameState.prayersLeft;
-    let newIsPraying = gameState.isPraying;
+            // Update Prayer State
+            if (result.prayerConsumed) {
+                newPrayersLeft = Math.max(0, newPrayersLeft - 1);
+                if (newPrayersLeft === 0) newIsPraying = false;
+            }
 
-    if (prayerConsumed) {
-        newPrayersLeft = Math.max(0, newPrayersLeft - 1);
-        newIsPraying = false; 
-    } else if (gameState.isPraying && !exploded) {
-        newIsPraying = false; 
+            // Check Explosion
+            if (result.exploded) {
+                newStatus = 'lost';
+                newGrid = revealAllMines(newGrid);
+                newGrid[target.r][target.c].isExploded = true;
+                break; // Stop chording if dead
+            }
+        }
+    } else {
+        // --- STANDARD REVEAL LOGIC ---
+        const result = revealCellLogic(
+            newGrid, 
+            row, 
+            col, 
+            gameState.mode, 
+            gameState.status === 'idle', // Is first click?
+            newIsPraying
+        );
+        newGrid = result.grid;
+
+        if (result.prayerConsumed) {
+            newPrayersLeft = Math.max(0, newPrayersLeft - 1);
+            if (newPrayersLeft === 0) newIsPraying = false;
+        }
+
+        if (result.exploded) {
+            newStatus = 'lost';
+            newGrid = revealAllMines(newGrid);
+            newGrid[row][col].isExploded = true;
+        }
     }
 
-    if (exploded) {
-      newStatus = 'lost';
-      newGrid = revealAllMines(newGrid);
-      newGrid[row][col].isExploded = true;
-    } else if (checkWin(newGrid)) {
+    // --- CHECK WIN CONDITION ---
+    if (newStatus !== 'lost' && checkWin(newGrid)) {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
@@ -162,7 +204,7 @@ const App: React.FC = () => {
       ...prev,
       grid: newGrid,
       status: newStatus,
-      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed,
+      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed, // Auto flag all on win doesn't update count usually, but kept for consistency
       prayersLeft: newPrayersLeft,
       isPraying: newIsPraying
     }));
@@ -343,12 +385,15 @@ const App: React.FC = () => {
           </div>
       </div>
 
-      <Modal 
-        status={gameState.status} 
-        time={gameState.timeElapsed} 
-        isBestTime={isBestTime}
-        onRestart={() => initGame()} 
-      />
+      {isGameOverModalOpen && (
+          <Modal 
+            status={gameState.status} 
+            time={gameState.timeElapsed} 
+            isBestTime={isBestTime}
+            onRestart={() => initGame()} 
+            onClose={() => setIsGameOverModalOpen(false)}
+          />
+      )}
 
       <SettingsModal 
         isOpen={showSettings}
