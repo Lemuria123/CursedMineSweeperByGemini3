@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grassland Minesweeper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Nunito', 'sans-serif'],
+            },
+            colors: {
+              grass: {
+                light: '#a7f3d0', // Emerald 200
+                medium: '#34d399', // Emerald 400
+                dark: '#059669', // Emerald 600
+                darker: '#064e3b', // Emerald 900
+              },
+              dirt: {
+                light: '#e7e5e4', // Stone 200
+                dark: '#d6d3d1', // Stone 300
+              }
+            }
+          },
+        },
+      }
+    </script>
+    <style>
+      /* Custom scrollbar to match theme */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #064e3b; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #34d399; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #10b981; 
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "framer-motion": "https://aistudiocdn.com/framer-motion@^12.23.24",
+    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+  }
+}
+</script>
+</head>
+  <body class="bg-slate-900 text-white overflow-hidden select-none">
+    <div id="root"></div>
+  </body>
+</html>
