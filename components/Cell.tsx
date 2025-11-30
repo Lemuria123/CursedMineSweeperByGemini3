@@ -75,7 +75,7 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
       
       if (navigator.vibrate) navigator.vibrate(50);
       onRightClick(e as unknown as React.MouseEvent);
-    }, 300); // 300ms long press
+    }, 200); // Reduced to 200ms for faster reaction
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {

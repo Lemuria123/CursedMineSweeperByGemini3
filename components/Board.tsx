@@ -11,15 +11,6 @@ interface BoardProps {
 }
 
 export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onCellRightClick }) => {
-  // 防御性检查：确保 grid 不为空
-  if (!grid || grid.length === 0 || !grid[0] || grid[0].length === 0) {
-    return (
-      <div className="bg-grass-darker p-3 rounded-lg shadow-2xl border-4 border-grass-dark/50 text-white">
-        <p>Loading game board...</p>
-      </div>
-    );
-  }
-
   const rows = grid.length;
   const cols = grid[0].length;
 
