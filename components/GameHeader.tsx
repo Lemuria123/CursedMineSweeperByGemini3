@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flag, Clock, RefreshCw, Hand } from 'lucide-react';
+import { Bomb, Clock, Hand } from 'lucide-react';
 import { GameStatus } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -33,11 +33,11 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   };
 
   return (
-    <div className="flex items-center justify-between w-full max-w-2xl bg-slate-800/80 backdrop-blur-md p-4 rounded-xl shadow-lg border border-slate-700 mb-6 gap-2 sm:gap-4">
+    <div className="flex items-center justify-between w-full max-w-2xl mx-auto bg-slate-800/80 backdrop-blur-md p-4 rounded-xl shadow-lg border border-slate-700 mb-6 gap-2 sm:gap-4">
       
       {/* Mines Counter */}
       <div className="flex items-center gap-2 bg-slate-900 px-3 py-2 sm:px-4 rounded-lg border border-red-900/50 shadow-inner min-w-[80px]">
-        <Flag className="text-red-500" size={20} fill="currentColor" />
+        <Bomb className="text-red-500" size={20} fill="currentColor" />
         <span className="text-xl sm:text-2xl font-mono text-red-400 font-bold ml-auto">
           {minesLeft}
         </span>

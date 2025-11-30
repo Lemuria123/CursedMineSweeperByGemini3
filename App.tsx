@@ -269,7 +269,8 @@ const App: React.FC = () => {
 
       {/* Fixed Header Section */}
       <div className="z-20 w-full flex-none p-4 pb-0 flex flex-col items-center pointer-events-none">
-        <div className="pointer-events-auto w-full max-w-4xl">
+        {/* Unified Max Width Container for HUD */}
+        <div className="pointer-events-auto w-full max-w-2xl">
              <div className="flex items-center gap-3 mb-4 justify-between">
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2">
@@ -278,11 +279,11 @@ const App: React.FC = () => {
                         ? 'bg-gradient-to-r from-red-500 to-orange-500' 
                         : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
                         }`}>
-                        {gameState.mode === 'strict' ? 'Strict Sweeper' : 'Grassland'}
+                        {gameState.mode === 'strict' ? 'Cursed Mine Sweeper' : 'Grassland Sweeper'}
                         </h1>
                         {gameState.mode === 'strict' && (
                         <span className="hidden sm:inline-block bg-red-900/50 text-red-300 text-[10px] px-1.5 py-0.5 rounded border border-red-700 font-mono">
-                            HARD
+                            CURSED
                         </span>
                         )}
                     </div>

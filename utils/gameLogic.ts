@@ -39,7 +39,6 @@ const countMinesAround = (grid: CellData[][], r: number, c: number): number => {
 };
 
 // Update neighbor counts for a specific cell and its neighbors
-// Used when moving mines dynamically
 const updateLocalCounts = (grid: CellData[][], r: number, c: number) => {
   const rows = grid.length;
   const cols = grid[0].length;
@@ -61,14 +60,11 @@ const moveMineToSafeSpot = (grid: CellData[][], fromRow: number, fromCol: number
   const rows = grid.length;
   const cols = grid[0].length;
   
-  // Find a random spot that is NOT a mine and NOT the source
   let attempts = 0;
   while (attempts < 1000) {
     const r = Math.floor(Math.random() * rows);
     const c = Math.floor(Math.random() * cols);
     
-    // Don't place on source, and don't place where there is already a mine
-    // Also avoid placing on revealed cells if possible (though revealed mines are bad anyway)
     if ((r !== fromRow || c !== fromCol) && !grid[r][c].isMine && grid[r][c].status === 'hidden') {
       
       // 1. Remove mine from source
@@ -96,7 +92,6 @@ export const placeMines = (
   let minesPlaced = 0;
   const newGrid = grid.map(row => row.map(cell => ({ ...cell })));
 
-  // Avoid placing mine on first click and its immediate neighbors to ensure a safe start
   const isSafeZone = (r: number, c: number) => {
     return Math.abs(r - firstClickRow) <= 1 && Math.abs(c - firstClickCol) <= 1;
   };
@@ -111,7 +106,6 @@ export const placeMines = (
     }
   }
 
-  // Calculate numbers
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (newGrid[r][c].isMine) continue;
@@ -124,16 +118,13 @@ export const placeMines = (
 
 // Check if a cell is logically FORCED to be a mine based on revealed neighbors
 const isLogicallyGuaranteedMine = (grid: CellData[][], r: number, c: number): boolean => {
-  // Iterate all neighbors of the target cell
   for (const [dr, dc] of DIRECTIONS) {
     const nr = r + dr;
     const nc = c + dc;
     
-    // Check if neighbor is valid and REVEALED
     if (nr >= 0 && nr < grid.length && nc >= 0 && nc < grid[0].length) {
       const neighbor = grid[nr][nc];
       if (neighbor.status === 'revealed') {
-        // Now, for this revealed neighbor, count its hidden neighbors
         let hiddenNeighborsCount = 0;
         let isTargetCellNeighbor = false;
         
@@ -150,14 +141,6 @@ const isLogicallyGuaranteedMine = (grid: CellData[][], r: number, c: number): bo
             }
         }
         
-        // neighbor.neighborMines is the total mines around it.
-        // If hiddenNeighborsCount === neighbor.neighborMines, then ALL hidden neighbors MUST be mines.
-        // (Note: This assumes we haven't already cleared some mines, but in standard play, 
-        // neighborMines is constant. If we had mechanics that reduced neighborMines display, we'd need to adjust.
-        // Standard Minesweeper: Number = Hidden Mines + Flagged Mines (if correct). 
-        // Actually, strictly: Number = Hidden Mines + Revealed Mines (if we allow walking on mines).
-        // Since we die on revealed mines, Number = Hidden Mines.
-        
         if (isTargetCellNeighbor && hiddenNeighborsCount === neighbor.neighborMines) {
             return true;
         }
@@ -165,6 +148,86 @@ const isLogicallyGuaranteedMine = (grid: CellData[][], r: number, c: number): bo
     }
   }
   return false;
+};
+
+// --- TRUE CURSED LOGIC HELPERS ---
+
+// Check if the current board state is valid regarding all revealed numbers
+// We only need to check the neighbors of the cells we modified (source and target)
+const isValidStateAround = (grid: CellData[][], cellsToCheck: {r: number, c: number}[]) => {
+    for (const cell of cellsToCheck) {
+        // Get all neighbors of this modified cell
+        const neighborsToCheck = [];
+        // Add the cell itself if it's revealed (unlikely for mines, but good practice)
+        if (grid[cell.r][cell.c].status === 'revealed') neighborsToCheck.push({r: cell.r, c: cell.c});
+
+        for (const [dr, dc] of DIRECTIONS) {
+            const nr = cell.r + dr;
+            const nc = cell.c + dc;
+            if (nr >= 0 && nr < grid.length && nc >= 0 && nc < grid[0].length) {
+                if (grid[nr][nc].status === 'revealed') {
+                    neighborsToCheck.push({r: nr, c: nc});
+                }
+            }
+        }
+
+        // Validate each revealed neighbor
+        for (const n of neighborsToCheck) {
+            const currentCount = countMinesAround(grid, n.r, n.c);
+            // The displayed number (truth) MUST match the current calculated count
+            if (currentCount !== grid[n.r][n.c].neighborMines) {
+                return false;
+            }
+        }
+    }
+    return true;
+};
+
+// The Reaper: Tries to rearrange mines to ensure grid[row][col] is a mine
+const attemptStrictKill = (grid: CellData[][], targetRow: number, targetCol: number): boolean => {
+    // 1. Identify all existing hidden mines that we can potentially move
+    // We sort them by distance to the target. 
+    // Why? Because swapping a nearby mine (local swap) is more likely to satisfy
+    // local constraints (like the "2" case the user encountered) than a far-away mine.
+    const hiddenMines: {r: number, c: number, dist: number}[] = [];
+    
+    for(let r=0; r<grid.length; r++) {
+        for(let c=0; c<grid[0].length; c++) {
+            if (grid[r][c].isMine && grid[r][c].status === 'hidden') {
+                // Don't move the mine if it's already on the target (though strict logic handles this before)
+                if (r === targetRow && c === targetCol) continue;
+                
+                const dist = Math.abs(r - targetRow) + Math.abs(c - targetCol);
+                hiddenMines.push({r, c, dist});
+            }
+        }
+    }
+
+    // Sort: Closest mines first (Priority to Local Swaps)
+    hiddenMines.sort((a, b) => a.dist - b.dist);
+
+    // 2. Try to swap each candidate mine to the target position
+    for (const mine of hiddenMines) {
+        // A. Perform Swap
+        grid[mine.r][mine.c].isMine = false;
+        grid[targetRow][targetCol].isMine = true;
+
+        // B. Check Consistency
+        // We only changed state at `mine` and `target`. 
+        // We need to ensure no REVEALED cell around `mine` or `target` became invalid.
+        if (isValidStateAround(grid, [{r: mine.r, c: mine.c}, {r: targetRow, c: targetCol}])) {
+            // C. Success! Commit the changes by updating the internal counts
+            updateLocalCounts(grid, mine.r, mine.c);
+            updateLocalCounts(grid, targetRow, targetCol);
+            return true;
+        }
+
+        // D. Failed, Revert Swap
+        grid[mine.r][mine.c].isMine = true;
+        grid[targetRow][targetCol].isMine = false;
+    }
+
+    return false;
 };
 
 export const revealCellLogic = (
@@ -183,106 +246,64 @@ export const revealCellLogic = (
     return { grid: newGrid, exploded: false, prayerConsumed: false };
   }
 
-  // --- HOSTILE MODE LOGIC ---
+  // --- TRUE CURSED MODE LOGIC ---
   if (gameMode === 'strict' && !isFirstClick) {
-    // 1. Identify revealed neighbors
-    const revealedNeighbors = [];
-    for (const [dr, dc] of DIRECTIONS) {
-      const nr = row + dr;
-      const nc = col + dc;
-      if (nr >= 0 && nr < newGrid.length && nc >= 0 && nc < newGrid[0].length) {
-        if (newGrid[nr][nc].status === 'revealed') {
-          revealedNeighbors.push(newGrid[nr][nc]);
-        }
-      }
-    }
-
-    // 2. Check "Adversarial Consistency"
-    let canBeMine = true;
-
-    if (revealedNeighbors.length === 0) {
-      canBeMine = true; 
-    } else {
-      for (const n of revealedNeighbors) {
-        const currentMinesAround = countMinesAround(newGrid, n.row, n.col);
-        const isTargetCurrentlyMine = newGrid[row][col].isMine ? 1 : 0;
-        const otherMines = currentMinesAround - isTargetCurrentlyMine;
-        
-        if (otherMines >= n.neighborMines) {
-          canBeMine = false;
-          break;
-        }
-      }
-    }
-
-    if (canBeMine) {
-      // It COULD be a mine (ambiguous or no info).
-      // STRICT MODE BEHAVIOR: Force it to be a mine.
-      
-      // -- PRAYER INTERVENTION --
-      if (isPraying) {
-          // If praying, we defy the Strict Mode punishment.
-          // We force it to be safe instead.
-          if (newGrid[row][col].isMine) {
-              moveMineToSafeSpot(newGrid, row, col);
-          }
-          // If it wasn't a mine, we just ensure it stays safe (no op).
-          prayerConsumed = true;
-          // Continue to reveal as normal safe cell
-      } else {
-          // Normal Strict Mode Punishment
-          if (!newGrid[row][col].isMine) {
-            // Find a hidden mine to remove/move to here
-            let removed = false;
-            let attempts = 0;
-            while (!removed && attempts < 1000) {
-                const r = Math.floor(Math.random() * newGrid.length);
-                const c = Math.floor(Math.random() * newGrid[0].length);
-                if (newGrid[r][c].isMine && newGrid[r][c].status === 'hidden' && (r !== row || c !== col)) {
-                    newGrid[r][c].isMine = false;
-                    updateLocalCounts(newGrid, r, c);
-                    removed = true;
-                }
-                attempts++;
-            }
-            newGrid[row][col].isMine = true;
-            updateLocalCounts(newGrid, row, col);
-          }
-          
-          newGrid[row][col].status = 'revealed';
-          newGrid[row][col].isExploded = true;
-          return { grid: newGrid, exploded: true, prayerConsumed: false };
-      }
-    } else {
-        // Logic dictates it MUST be safe.
-        // If it was randomly placed as a mine during init, we must save the player.
-        if (newGrid[row][col].isMine) {
-            moveMineToSafeSpot(newGrid, row, col);
-        }
-    }
+     if (isPraying) {
+         // Prayer Logic: Try to SAVE the player
+         if (newGrid[row][col].isMine) {
+             moveMineToSafeSpot(newGrid, row, col);
+             // Verify we actually saved them (might fail if map is 100% full, unlikely)
+             if (!newGrid[row][col].isMine) {
+                 prayerConsumed = true;
+             }
+         } else {
+             // Was safe anyway, consume prayer for the "safety check"
+             prayerConsumed = true;
+         }
+     } else {
+         // Punishment Logic: Try to KILL the player
+         if (newGrid[row][col].isMine) {
+             // Already dead, nothing to do.
+         } else {
+             // Try to find a valid configuration where this cell is a mine
+             const killed = attemptStrictKill(newGrid, row, col);
+             if (killed) {
+                 // We successfully moved a mine here.
+                 // Execution continues below to "Standard Mine Hit Logic"
+             } else {
+                 // We failed to kill the player. Math saved them.
+                 // This means the cell is logically guaranteed to be safe.
+             }
+         }
+     }
   }
-  // --- END HOSTILE LOGIC ---
+  // --- END CURSED LOGIC ---
 
 
-  // --- STANDARD MINE HIT LOGIC (Classic Mode or Post-Prayer Strict Mode) ---
+  // --- STANDARD MINE HIT LOGIC ---
   if (newGrid[row][col].isMine) {
-    // We hit a mine. Is it savable via Prayer?
-    if (isPraying) {
-        // Check if it was a GUARANTEED mine
+    // If we are here in strict mode w/o prayer, we are dead.
+    // If classic mode, or prayer failed to move mine (logic lock), we check constraints.
+
+    if (isPraying) { 
+        // This block is mostly for Classic Mode + Prayer, 
+        // or Strict Mode where moveMineToSafeSpot failed (super rare).
         if (isLogicallyGuaranteedMine(newGrid, row, col)) {
-            // Prayer Fails: You ignored logic.
             newGrid[row][col].status = 'revealed';
             newGrid[row][col].isExploded = true;
-            // Prayer is consumed in the attempt
             return { grid: newGrid, exploded: true, prayerConsumed: true };
         } else {
-            // Prayer Succeeds: It was bad luck.
+            // Last ditch save attempt
             moveMineToSafeSpot(newGrid, row, col);
-            prayerConsumed = true;
-            // Fall through to normal reveal logic
+            if (!newGrid[row][col].isMine) {
+                prayerConsumed = true;
+            } else {
+                newGrid[row][col].status = 'revealed';
+                newGrid[row][col].isExploded = true;
+                return { grid: newGrid, exploded: true, prayerConsumed: true };
+            }
         }
     } else {
-        // No prayer, boom.
         newGrid[row][col].status = 'revealed';
         newGrid[row][col].isExploded = true;
         return { grid: newGrid, exploded: true, prayerConsumed: false };
