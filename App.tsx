@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CursedReward } from './types';
 import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines } from './utils/gameLogic';
@@ -49,6 +49,19 @@ const App: React.FC = () => {
   const isDraggingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
+  // Center the board logic
+  const centerBoard = useCallback(() => {
+    if (scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        // Use requestAnimationFrame to ensure layout is complete
+        requestAnimationFrame(() => {
+            const centerX = (container.scrollWidth - container.clientWidth) / 2;
+            const centerY = (container.scrollHeight - container.clientHeight) / 2;
+            container.scrollTo({ left: centerX, top: centerY, behavior: 'auto' });
+        });
+    }
+  }, []);
+
   // Initialize Game
   const initGame = useCallback((diff: Difficulty = difficulty) => {
     setGameState({
@@ -63,15 +76,16 @@ const App: React.FC = () => {
     setIsPrayerFailure(false);
     setNewUnlockedReward(null);
     
-    if (scrollContainerRef.current) {
-        const container = scrollContainerRef.current;
-        setTimeout(() => {
-            const centerX = (container.scrollWidth - container.clientWidth) / 2;
-            const centerY = (container.scrollHeight - container.clientHeight) / 2;
-            container.scrollTo({ left: centerX, top: centerY, behavior: 'smooth' });
-        }, 100);
-    }
-  }, [difficulty]);
+    // Trigger centering after a short delay to allow React to render the new grid size
+    setTimeout(centerBoard, 50);
+  }, [difficulty, centerBoard]);
+
+  // Center on mount and resize
+  useEffect(() => {
+    centerBoard();
+    window.addEventListener('resize', centerBoard);
+    return () => window.removeEventListener('resize', centerBoard);
+  }, [centerBoard]);
 
   // Difficulty Change Handler
   const handleDifficultyChange = (newDiff: Difficulty) => {
@@ -313,12 +327,19 @@ const App: React.FC = () => {
       {/* Scrollable Game Board Area */}
       <div 
         ref={scrollContainerRef}
-        className="flex-1 overflow-hidden cursor-grab active:cursor-grabbing relative z-10 w-full"
+        className="flex-1 overflow-auto custom-scrollbar cursor-grab active:cursor-grabbing relative z-10 w-full"
         onPointerDown={handlePointerDown}
         onClickCapture={handleClickCapture} 
         onContextMenuCapture={handleClickCapture} 
       >
-          <div className="min-w-full min-h-full flex items-center justify-center p-8 lg:p-12 w-fit h-fit mx-auto">
+          {/* 
+            Container for the board. 
+            We use min-w-full and min-h-full to ensure it expands to fill the scroll area,
+            but we rely on JS scrollTo for initial centering rather than flex-center 
+            to avoid clipping on mobile when the board is larger than viewport.
+            Added m-auto so it centers via margin if it's smaller than the viewport.
+          */}
+          <div className="min-w-fit min-h-fit p-8 lg:p-12 m-auto w-fit h-fit block">
             <Board 
                 grid={gameState.grid} 
                 gameStatus={gameState.status}
