@@ -27,7 +27,6 @@ export interface GameState {
   status: GameStatus;
   difficulty: Difficulty;
   flagsUsed: number;
-  timeElapsed: number;
   prayersUsed: number; // Changed from prayersLeft
   isPraying: boolean;
 }

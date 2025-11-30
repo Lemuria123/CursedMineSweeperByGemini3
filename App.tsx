@@ -33,13 +33,12 @@ const App: React.FC = () => {
     status: 'idle',
     difficulty: DIFFICULTIES[0],
     flagsUsed: 0,
-    timeElapsed: 0,
     prayersUsed: 0,
     isPraying: false,
   });
 
   const [isGameOverModalOpen, setIsGameOverModalOpen] = useState(false);
-  const [timerInterval, setTimerInterval] = useState<number | null>(null);
+  const [isPrayerFailure, setIsPrayerFailure] = useState(false);
 
   // New State for Just Unlocked Reward
   const [newUnlockedReward, setNewUnlockedReward] = useState<CursedReward | null>(null);
@@ -52,18 +51,16 @@ const App: React.FC = () => {
 
   // Initialize Game
   const initGame = useCallback((diff: Difficulty = difficulty) => {
-    if (timerInterval) clearInterval(timerInterval);
     setGameState({
       grid: createEmptyGrid(diff.rows, diff.cols),
       status: 'idle',
       difficulty: diff,
       flagsUsed: 0,
-      timeElapsed: 0,
       prayersUsed: 0,
       isPraying: false,
     });
-    setTimerInterval(null);
     setIsGameOverModalOpen(false);
+    setIsPrayerFailure(false);
     setNewUnlockedReward(null);
     
     if (scrollContainerRef.current) {
@@ -74,29 +71,13 @@ const App: React.FC = () => {
             container.scrollTo({ left: centerX, top: centerY, behavior: 'smooth' });
         }, 100);
     }
-  }, [difficulty, timerInterval]);
+  }, [difficulty]);
 
   // Difficulty Change Handler
   const handleDifficultyChange = (newDiff: Difficulty) => {
     setDifficulty(newDiff);
     initGame(newDiff);
   };
-
-  // Timer Logic
-  useEffect(() => {
-    if (gameState.status === 'playing' && !timerInterval) {
-      const id = window.setInterval(() => {
-        setGameState(prev => ({ ...prev, timeElapsed: prev.timeElapsed + 1 }));
-      }, 1000);
-      setTimerInterval(id);
-    } else if (gameState.status !== 'playing' && timerInterval) {
-      clearInterval(timerInterval);
-      setTimerInterval(null);
-    }
-    return () => {
-      if (timerInterval) clearInterval(timerInterval);
-    };
-  }, [gameState.status, timerInterval]);
 
   // Handle Game Over Modal Visibility
   useEffect(() => {
@@ -131,10 +112,16 @@ const App: React.FC = () => {
       newStatus = 'playing';
     }
 
+    // Capture prayer state before logic runs to determine if it was a failure
+    const wasPrayingActive = newIsPraying;
+
     // Logic for Revealed vs Hidden cells
+    let actionTaken = false;
     if (cell.status === 'revealed') {
         // --- CHORDING LOGIC ---
         const targets = getChordTargets(newGrid, row, col);
+        if (targets.length > 0) actionTaken = true;
+        
         for (const target of targets) {
             const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying);
             newGrid = result.grid; 
@@ -148,6 +135,7 @@ const App: React.FC = () => {
         }
     } else {
         // --- STANDARD REVEAL LOGIC ---
+        actionTaken = true;
         const result = revealCellLogic(newGrid, row, col, gameState.status === 'idle', newIsPraying);
         newGrid = result.grid;
         if (result.prayerConsumed) newPrayersUsed++;
@@ -156,6 +144,16 @@ const App: React.FC = () => {
             newGrid = revealAllMines(newGrid);
             newGrid[row][col].isExploded = true;
         }
+    }
+
+    // Auto-disable prayer after an action
+    if (newIsPraying && actionTaken) {
+        newIsPraying = false;
+    }
+
+    // Detect Prayer Failure
+    if (newStatus === 'lost' && wasPrayingActive) {
+        setIsPrayerFailure(true);
     }
 
     // --- CHECK WIN CONDITION ---
@@ -289,7 +287,6 @@ const App: React.FC = () => {
                         title="The Grimoire"
                     >
                         <BookOpen size={20} />
-                        {/* Notification dot if something is unlocked but not viewed? For now just simple */}
                     </button>
 
                     <button 
@@ -304,7 +301,6 @@ const App: React.FC = () => {
 
             <GameHeader 
             minesLeft={gameState.difficulty.mines - gameState.flagsUsed} 
-            timer={gameState.timeElapsed} 
             status={gameState.status}
             prayersUsed={gameState.prayersUsed}
             isPraying={gameState.isPraying}
@@ -335,9 +331,9 @@ const App: React.FC = () => {
       {isGameOverModalOpen && (
           <Modal 
             status={gameState.status} 
-            time={gameState.timeElapsed} 
             prayersUsed={gameState.prayersUsed}
             newReward={newUnlockedReward}
+            isPrayerFailure={isPrayerFailure}
             onRestart={() => initGame()} 
             onClose={() => setIsGameOverModalOpen(false)}
           />

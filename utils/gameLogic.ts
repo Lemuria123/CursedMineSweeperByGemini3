@@ -65,29 +65,62 @@ const updateLocalCounts = (grid: CellData[][], r: number, c: number) => {
   });
 };
 
-const moveMineToSafeSpot = (grid: CellData[][], fromRow: number, fromCol: number) => {
+// Get signatures of revealed neighbors to ensure we don't break invariants
+const getRevealedNeighbors = (grid: CellData[][], r: number, c: number): string[] => {
+  const neighbors: string[] = [];
+  DIRECTIONS.forEach(([dr, dc]) => {
+    const nr = r + dr;
+    const nc = c + dc;
+    if (nr >= 0 && nr < grid.length && nc >= 0 && nc < grid[0].length) {
+      if (grid[nr][nc].status === 'revealed') {
+        neighbors.push(grid[nr][nc].id);
+      }
+    }
+  });
+  return neighbors.sort();
+};
+
+// Robust Mine Moving: Only moves mine to a spot that shares the EXACT same revealed neighbors.
+// This ensures that the displayed numbers on the board never change.
+const attemptMineMovePreservingCounts = (grid: CellData[][], r: number, c: number): boolean => {
   const rows = grid.length;
   const cols = grid[0].length;
-  
-  let attempts = 0;
-  while (attempts < 1000) {
-    const r = Math.floor(Math.random() * rows);
-    const c = Math.floor(Math.random() * cols);
-    
-    if ((r !== fromRow || c !== fromCol) && !grid[r][c].isMine && grid[r][c].status === 'hidden') {
-      
-      // 1. Remove mine from source
-      grid[fromRow][fromCol].isMine = false;
-      updateLocalCounts(grid, fromRow, fromCol);
+  const currentRevealedNeighbors = getRevealedNeighbors(grid, r, c);
+  const currentRevealedNeighborsStr = JSON.stringify(currentRevealedNeighbors);
 
-      // 2. Add mine to target
-      grid[r][c].isMine = true;
-      updateLocalCounts(grid, r, c);
+  // Collect all valid empty candidates
+  const candidates: {r: number, c: number}[] = [];
+
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      if (i === r && j === c) continue;
+      if (grid[i][j].isMine) continue;
+      if (grid[i][j].status !== 'hidden') continue;
+
+      // Optimization: If source has no revealed neighbors, target just needs no revealed neighbors
+      // If source has neighbors, target must match them exactly
+      const candidateRevealedNeighbors = getRevealedNeighbors(grid, i, j);
       
-      return;
+      if (JSON.stringify(candidateRevealedNeighbors) === currentRevealedNeighborsStr) {
+        candidates.push({r: i, c: j});
+      }
     }
-    attempts++;
   }
+
+  if (candidates.length === 0) return false;
+
+  // Pick random candidate
+  const target = candidates[Math.floor(Math.random() * candidates.length)];
+
+  // Swap
+  grid[r][c].isMine = false;
+  grid[target.r][target.c].isMine = true;
+
+  // Update counts for both affected areas
+  updateLocalCounts(grid, r, c);
+  updateLocalCounts(grid, target.r, target.c);
+
+  return true;
 };
 
 export const placeMines = (
@@ -164,9 +197,7 @@ const isLogicallyGuaranteedMine = (grid: CellData[][], r: number, c: number): bo
 // Check if the current board state is valid regarding all revealed numbers
 const isValidStateAround = (grid: CellData[][], cellsToCheck: {r: number, c: number}[]) => {
     for (const cell of cellsToCheck) {
-        // Get all neighbors of this modified cell
         const neighborsToCheck = [];
-        // Add the cell itself if it's revealed (unlikely for mines, but good practice)
         if (grid[cell.r][cell.c].status === 'revealed') neighborsToCheck.push({r: cell.r, c: cell.c});
 
         for (const [dr, dc] of DIRECTIONS) {
@@ -179,10 +210,8 @@ const isValidStateAround = (grid: CellData[][], cellsToCheck: {r: number, c: num
             }
         }
 
-        // Validate each revealed neighbor
         for (const n of neighborsToCheck) {
             const currentCount = countMinesAround(grid, n.r, n.c);
-            // The displayed number (truth) MUST match the current calculated count
             if (currentCount !== grid[n.r][n.c].neighborMines) {
                 return false;
             }
@@ -273,9 +302,9 @@ export const revealCellLogic = (
      if (isPraying) {
          // Prayer Logic: Try to SAVE the player
          if (newGrid[row][col].isMine) {
-             moveMineToSafeSpot(newGrid, row, col);
+             const success = attemptMineMovePreservingCounts(newGrid, row, col);
              // If we successfully moved it, prayer worked
-             if (!newGrid[row][col].isMine) {
+             if (success) {
                  prayerConsumed = true;
              }
          } else {
@@ -285,7 +314,6 @@ export const revealCellLogic = (
      } else {
          // Punishment Logic: Try to KILL the player
          if (!newGrid[row][col].isMine) {
-             // Try to find a valid configuration where this cell is a mine
              attemptStrictKill(newGrid, row, col);
          }
      }
@@ -293,28 +321,15 @@ export const revealCellLogic = (
 
   // --- STANDARD MINE HIT LOGIC ---
   if (newGrid[row][col].isMine) {
-    // If here, either no prayer, or prayer failed (rare logic lock)
-    if (isPraying) { 
-        // Logic lock fallback
-        if (isLogicallyGuaranteedMine(newGrid, row, col)) {
-            newGrid[row][col].status = 'revealed';
-            newGrid[row][col].isExploded = true;
-            return { grid: newGrid, exploded: true, prayerConsumed: true };
-        } else {
-            moveMineToSafeSpot(newGrid, row, col);
-            if (!newGrid[row][col].isMine) {
-                prayerConsumed = true;
-            } else {
-                newGrid[row][col].status = 'revealed';
-                newGrid[row][col].isExploded = true;
-                return { grid: newGrid, exploded: true, prayerConsumed: true };
-            }
-        }
-    } else {
-        newGrid[row][col].status = 'revealed';
-        newGrid[row][col].isExploded = true;
-        return { grid: newGrid, exploded: true, prayerConsumed: false };
-    }
+    // If we are here, either:
+    // 1. Not praying
+    // 2. Praying, but move failed (Guaranteed Mine / No Candidates)
+    
+    newGrid[row][col].status = 'revealed';
+    newGrid[row][col].isExploded = true;
+    
+    // Prayer is consumed if it was active, even if it failed to save you
+    return { grid: newGrid, exploded: true, prayerConsumed: isPraying };
   }
 
   // Normal Flood Fill Reveal

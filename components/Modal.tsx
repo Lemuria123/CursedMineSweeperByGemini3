@@ -1,19 +1,19 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Bomb, Eye, Star, Crown, Sparkles } from 'lucide-react';
+import { Trophy, Bomb, Eye, Crown, Sparkles } from 'lucide-react';
 import { GameStatus, CursedReward } from '../types';
 
 interface ModalProps {
   status: GameStatus;
-  time: number;
   prayersUsed: number;
-  newReward: CursedReward | null; // Changed from isBestTime to newReward
+  newReward: CursedReward | null; 
+  isPrayerFailure?: boolean;
   onRestart: () => void;
   onClose?: () => void;
 }
 
-export const Modal: React.FC<ModalProps> = ({ status, time, prayersUsed, newReward, onRestart, onClose }) => {
+export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, newReward, isPrayerFailure, onRestart, onClose }) => {
   if (status !== 'won' && status !== 'lost') return null;
 
   const isWin = status === 'won';
@@ -104,8 +104,11 @@ export const Modal: React.FC<ModalProps> = ({ status, time, prayersUsed, newRewa
 
                 <p className="text-slate-400 mb-6 text-sm leading-relaxed">
                 {isWin 
-                    ? `Sector cleared in ${time}s using ${prayersUsed} prayers.` 
-                    : 'The curse claims another soul.'}
+                    ? `Sector cleared using ${prayersUsed} prayers.` 
+                    : (isPrayerFailure 
+                        ? 'Not even prayer can save you from the inevitable.' 
+                        : 'The curse claims another soul.')
+                }
                 </p>
             </>
         )}
@@ -127,7 +130,7 @@ export const Modal: React.FC<ModalProps> = ({ status, time, prayersUsed, newRewa
                     className="w-full py-3 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
                 >
                     <Eye size={18} />
-                    Open Grimoire
+                    View Board
                 </button>
             )}
         </div>

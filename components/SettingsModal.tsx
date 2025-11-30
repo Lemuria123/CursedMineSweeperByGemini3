@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { X, LayoutGrid, Bomb, Grid3X3, Skull } from 'lucide-react';
 import { Difficulty } from '../types';
+import { calculateRecommendedMines } from '../utils/gameLogic';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -31,9 +32,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen, currentDifficulty]);
 
+  // Real-time calculation of default mines when dimensions change
   useEffect(() => {
-      const maxMines = Math.floor(rows * cols * 0.85); 
-      if (mines > maxMines) setMines(maxMines);
+      // We set the mines to the recommended amount for the new size
+      setMines(calculateRecommendedMines(rows, cols));
   }, [rows, cols]);
 
   const handleApply = () => {
@@ -49,6 +51,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handlePresetClick = (d: Difficulty) => {
       setRows(d.rows);
       setCols(d.cols);
+      // Mine update will trigger via useEffect, but we set it here explicitly to ensure preset consistency if useEffect has delay
       setMines(d.mines);
   };
 
@@ -73,17 +76,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </button>
 
         {/* Cursed Header Section */}
-        <div className="flex flex-col items-center text-center mb-8 pt-2">
+        <div className="flex flex-col items-center text-center mb-6 pt-2">
             <div className="p-4 rounded-full bg-red-500/10 text-red-500 mb-4 border border-red-500/20 shadow-[0_0_20px_rgba(220,38,38,0.2)]">
                 <Skull size={40} strokeWidth={2} />
             </div>
-            <h2 className="text-3xl font-black text-white mb-3 tracking-tight">
+            <h2 className="text-3xl font-black text-white mb-4 tracking-tight">
                 You are <span className="text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.6)]">Cursed!</span>
             </h2>
-            <p className="text-sm text-slate-400 font-medium max-w-[90%] mx-auto leading-relaxed">
-                <span className="text-red-400 font-bold">Guesses are punished.</span><br/> 
-                If a cell <span className="italic text-slate-300">could</span> be a mine, it <span className="text-red-400 font-bold italic">IS</span> a mine.
-            </p>
+            <div className="space-y-3">
+                <div className="text-lg text-slate-300 font-medium leading-relaxed">
+                    <p className="text-red-400 font-bold mb-1">Guesses are punished.</p>
+                    <p>
+                        If a cell <span className="italic text-white">could</span> be a mine, it <span className="text-red-400 font-bold italic">IS</span> a mine.
+                    </p>
+                </div>
+                <p className="text-amber-400 font-bold tracking-wide uppercase text-sm border-t border-slate-700 pt-3 mt-2 inline-block px-4">
+                    Only prayer can save you.
+                </p>
+            </div>
         </div>
 
         {/* Quick Presets */}
