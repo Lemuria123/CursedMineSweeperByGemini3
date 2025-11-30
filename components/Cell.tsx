@@ -27,8 +27,12 @@ const NUMBER_COLORS = [
 export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightClick, disabled }) => {
   const { row, col, status, isMine, neighborMines, isExploded } = data;
   
-  // Long press refs
+  // Refs for handling touch logic securely
   const timerRef = useRef<any>(null);
+  
+  // State lock: If true, it means the LAST (or current) touch interaction was a long press.
+  // We reset this to false only when a NEW touch starts.
+  // This ensures that no matter how late the 'click' event fires after a long press, we block it.
   const isLongPress = useRef(false);
 
   // Checkerboard pattern logic
@@ -61,31 +65,50 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
   // --- Touch Logic for Long Press ---
   const handleTouchStart = (e: React.TouchEvent) => {
     if (disabled) return;
+    
+    // CRITICAL: A new touch has started. Reset the long-press lock.
     isLongPress.current = false;
+    
     timerRef.current = setTimeout(() => {
+      // Timer fired: This interaction is now officially a long press.
       isLongPress.current = true;
+      
       if (navigator.vibrate) navigator.vibrate(50);
       onRightClick(e as unknown as React.MouseEvent);
-    }, 300); // 300ms long press threshold
+    }, 300); // 300ms long press
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    // Clear timer if it hasn't fired yet (short tap)
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    // If long press triggered, prevent default click behavior
+    
+    // If it WAS a long press, we must suppress the subsequent click event from the browser
     if (isLongPress.current) {
-       e.preventDefault();
+       if (e.cancelable) e.preventDefault();
     }
   };
 
   const handleTouchMove = () => {
-    // Cancel long press if scrolling
+    // Cancel long press if user drags/scrolls
     if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
     }
+  };
+
+  const handleSafeClick = () => {
+      if (disabled) return;
+      
+      // Secondary Safety Layer:
+      // If e.preventDefault() failed (e.g., ghost clicks on some Android webviews),
+      // we check our lock. The lock remains TRUE until the user touches the screen again.
+      if (isLongPress.current) {
+          return;
+      }
+      onClick();
   };
 
   return (
@@ -96,7 +119,7 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
         select-none
         p-[1px] // Slight gap to let the dark board background show through at corners
       `}
-      onClick={disabled ? undefined : onClick}
+      onClick={handleSafeClick}
       onContextMenu={disabled ? undefined : onRightClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
