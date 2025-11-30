@@ -36,22 +36,24 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
   
   // Dynamic classes based on state
   let bgClass = '';
+  let borderClass = '';
+  let contentClass = '';
   
   if (status === 'revealed') {
     if (isMine) {
-      bgClass = isExploded ? 'bg-red-500' : 'bg-red-200';
+      bgClass = isExploded ? 'bg-red-500' : 'bg-red-400';
+      borderClass = 'border-none';
     } else {
-      bgClass = isEven ? 'bg-[#e5c29f]' : 'bg-[#d7b594]'; // Dirt colors
+      // Dirt (Revealed) - Flat look
+      bgClass = isEven ? 'bg-dirt-light' : 'bg-dirt-dark';
     }
   } else {
-    // Hidden (Grass)
-    bgClass = isEven ? 'bg-grass-medium hover:bg-emerald-300' : 'bg-grass-dark hover:bg-emerald-500';
+    // Hidden (Grass) - 3D Button look
+    bgClass = isEven ? 'bg-grass-light' : 'bg-grass-dark';
+    // 3D effect: Bottom border simulates the side of the block
+    borderClass = 'border-b-[4px] border-grass-shadow';
+    contentClass = 'active:border-b-0 active:translate-y-[4px] transition-all';
   }
-
-  // Shadow for 3D effect on hidden cells
-  const shadowClass = status === 'hidden' || status === 'flagged' 
-    ? 'shadow-[inset_0_-4px_0_rgba(0,0,0,0.15)] active:shadow-none active:translate-y-[2px]' 
-    : '';
 
   // Ensure exploded cells appear on top of neighbors for the animation
   const zIndexClass = isExploded ? 'z-50' : 'z-0';
@@ -64,7 +66,7 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
       isLongPress.current = true;
       if (navigator.vibrate) navigator.vibrate(50);
       onRightClick(e as unknown as React.MouseEvent);
-    }, 500); // 500ms long press threshold
+    }, 300); // 300ms long press threshold
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
@@ -89,61 +91,68 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
   return (
     <div
       className={`
-        relative w-full h-full flex items-center justify-center
-        text-lg font-bold cursor-pointer select-none transition-transform duration-75
-        ${bgClass} ${shadowClass} ${zIndexClass} rounded-sm
+        relative w-full h-full 
+        ${zIndexClass} 
+        select-none
+        p-[1px] // Slight gap to let the dark board background show through at corners
       `}
       onClick={disabled ? undefined : onClick}
       onContextMenu={disabled ? undefined : onRightClick}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       onTouchMove={handleTouchMove}
-      style={{ WebkitTapHighlightColor: 'transparent' }}
     >
-      <AnimatePresence>
-        {isExploded && <ExplosionEffect />}
-      </AnimatePresence>
+        {/* Main Cell Body */}
+        <div className={`
+            w-full h-full flex items-center justify-center
+            text-lg font-bold cursor-pointer rounded-md
+            ${bgClass} ${borderClass} ${contentClass}
+        `}>
+          <AnimatePresence>
+            {isExploded && <ExplosionEffect />}
+          </AnimatePresence>
 
-      {/* Render Content */}
-      {status === 'revealed' && !isMine && neighborMines > 0 && (
-        <motion.span
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className={NUMBER_COLORS[neighborMines]}
-        >
-          {neighborMines}
-        </motion.span>
-      )}
+          {/* Render Content */}
+          {status === 'revealed' && !isMine && neighborMines > 0 && (
+            <motion.span
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className={`${NUMBER_COLORS[neighborMines]} drop-shadow-sm`}
+            >
+              {neighborMines}
+            </motion.span>
+          )}
 
-      {status === 'revealed' && isMine && (
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 15 }}
-        >
-          <Bomb size={20} className={isExploded ? "text-white fill-current" : "text-gray-800 fill-current"} />
-        </motion.div>
-      )}
+          {status === 'revealed' && isMine && (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 15 }}
+            >
+              <Bomb size={20} className={isExploded ? "text-white fill-current" : "text-gray-800 fill-current"} />
+            </motion.div>
+          )}
 
-      <AnimatePresence>
-        {status === 'flagged' && (
-          <motion.div
-            initial={{ scale: 0, rotate: -20 }}
-            animate={{ scale: 1, rotate: 0 }}
-            exit={{ scale: 0, opacity: 0 }}
-            className="text-red-600 drop-shadow-md"
-          >
-            <Flag size={20} fill="currentColor" />
-          </motion.div>
-        )}
-      </AnimatePresence>
-      
-      {/* Incorrect Flag Reveal (only when game over and cell is revealed but was safe) */}
-      {status === 'revealed' && !isMine && data.isMine === false && data.status === 'flagged' && (
-         <div className="absolute inset-0 flex items-center justify-center opacity-50">
-           <X className="text-red-900" size={24} />
-         </div>
-      )}
+          <AnimatePresence>
+            {status === 'flagged' && (
+              <motion.div
+                initial={{ scale: 0, y: -10 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0, opacity: 0 }}
+                className="text-red-600 drop-shadow-md relative -top-[2px]"
+              >
+                <Flag size={20} fill="#dc2626" strokeWidth={2} className="text-red-700" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          
+          {/* Incorrect Flag Reveal */}
+          {status === 'revealed' && !isMine && data.isMine === false && data.status === 'flagged' && (
+             <div className="absolute inset-0 flex items-center justify-center opacity-60">
+               <X className="text-red-800" size={24} strokeWidth={3} />
+             </div>
+          )}
+      </div>
     </div>
   );
 });

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Cell } from './Cell';
 import { CellData, GameStatus } from '../types';
@@ -15,20 +16,19 @@ export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onC
 
   return (
     <div 
-      className="bg-grass-darker p-3 rounded-lg shadow-2xl border-4 border-grass-dark/50"
+      className="bg-[#14532d] p-3 rounded-lg shadow-2xl border-4 border-[#14532d]"
       style={{
         display: 'grid',
-        gridTemplateColumns: `repeat(${cols}, max-content)`, // Changed from minmax(0, 1fr) to max-content to prevent shrinking
-        gap: '2px',
+        gridTemplateColumns: `repeat(${cols}, max-content)`, 
+        gap: '0px',
         width: 'fit-content',
-        // removed maxWidth: '100%' to allow overflow scrolling
       }}
     >
       {grid.flatMap((row) =>
         row.map((cell) => (
           <div 
             key={cell.id} 
-            className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12"
+            className="w-9 h-9 sm:w-10 sm:h-10 md:w-12 md:h-12"
           >
             <Cell
               data={cell}
