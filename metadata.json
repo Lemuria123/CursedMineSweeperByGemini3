@@ -1,5 +1,5 @@
 {
-  "name": "A Cursed Mine Sweeper Game",
-  "description": "被诅咒的扫雷游戏",
+  "name": "Cursed Minesweeper",
+  "description": "A minesweeper where guessing is death. Only prayer can save you.",
   "requestFramePermissions": []
 }

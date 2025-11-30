@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CursedReward } from './types';
-import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines } from './utils/gameLogic';
+import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
 import { hasRewardForDifficulty, saveReward } from './utils/storage';
 import { fetchCursedReward } from './utils/cursedContent';
 import { Board } from './components/Board';
@@ -43,6 +43,9 @@ const App: React.FC = () => {
   // New State for Just Unlocked Reward
   const [newUnlockedReward, setNewUnlockedReward] = useState<CursedReward | null>(null);
 
+  // Transient UI state for flashing cells on invalid chord click
+  const [highlightedCells, setHighlightedCells] = useState<string[]>([]);
+
   // --- Drag to Scroll State ---
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDownRef = useRef(false);
@@ -75,6 +78,7 @@ const App: React.FC = () => {
     setIsGameOverModalOpen(false);
     setIsPrayerFailure(false);
     setNewUnlockedReward(null);
+    setHighlightedCells([]);
     
     // Trigger centering after a short delay to allow React to render the new grid size
     setTimeout(centerBoard, 50);
@@ -134,17 +138,40 @@ const App: React.FC = () => {
     if (cell.status === 'revealed') {
         // --- CHORDING LOGIC ---
         const targets = getChordTargets(newGrid, row, col);
-        if (targets.length > 0) actionTaken = true;
         
-        for (const target of targets) {
-            const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying);
-            newGrid = result.grid; 
-            if (result.prayerConsumed) newPrayersUsed++;
-            if (result.exploded) {
-                newStatus = 'lost';
-                newGrid = revealAllMines(newGrid);
-                newGrid[target.r][target.c].isExploded = true;
-                break;
+        if (targets.length > 0) {
+            actionTaken = true;
+            for (const target of targets) {
+                const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying);
+                newGrid = result.grid; 
+                if (result.prayerConsumed) newPrayersUsed++;
+                if (result.exploded) {
+                    newStatus = 'lost';
+                    newGrid = revealAllMines(newGrid);
+                    newGrid[target.r][target.c].isExploded = true;
+                    break;
+                }
+            }
+        } else {
+            // Check if we should flash neighbors (Feedback for "Not enough flags")
+            const neighborMines = cell.neighborMines;
+            if (neighborMines > 0) {
+                // Count current flags around logic is slightly duplicated from getChordTargets but that returns [] if not matching.
+                // We want to detect the case where flags != neighborMines
+                const neighbors = getNeighbors(newGrid, row, col);
+                const flags = neighbors.filter(n => newGrid[n.r][n.c].status === 'flagged').length;
+                
+                if (flags !== neighborMines) {
+                    // Flash surrounding HIDDEN cells
+                    const hiddenNeighbors = neighbors
+                        .filter(n => newGrid[n.r][n.c].status === 'hidden')
+                        .map(n => newGrid[n.r][n.c].id);
+                    
+                    if (hiddenNeighbors.length > 0) {
+                        setHighlightedCells(hiddenNeighbors);
+                        setTimeout(() => setHighlightedCells([]), 150);
+                    }
+                }
             }
         }
     } else {
@@ -289,7 +316,7 @@ const App: React.FC = () => {
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2">
                          <h1 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight bg-gradient-to-r from-red-500 to-orange-500">
-                           Cursed Mine Sweeper
+                           CURSED MINES
                         </h1>
                     </div>
                 </div>
@@ -298,7 +325,7 @@ const App: React.FC = () => {
                     <button 
                         onClick={() => setShowGrimoire(true)}
                         className="p-2 rounded-full bg-slate-800 text-amber-500 hover:text-amber-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg group relative"
-                        title="The Grimoire"
+                        title="Grimoire (Collection)"
                     >
                         <BookOpen size={20} />
                     </button>
@@ -332,19 +359,13 @@ const App: React.FC = () => {
         onClickCapture={handleClickCapture} 
         onContextMenuCapture={handleClickCapture} 
       >
-          {/* 
-            Container for the board. 
-            We use min-w-full and min-h-full to ensure it expands to fill the scroll area,
-            but we rely on JS scrollTo for initial centering rather than flex-center 
-            to avoid clipping on mobile when the board is larger than viewport.
-            Added m-auto so it centers via margin if it's smaller than the viewport.
-          */}
           <div className="min-w-fit min-h-fit p-8 lg:p-12 m-auto w-fit h-fit block">
             <Board 
                 grid={gameState.grid} 
                 gameStatus={gameState.status}
                 onCellClick={handleCellClick}
                 onCellRightClick={handleRightClick}
+                highlightedCells={highlightedCells}
             />
           </div>
       </div>

@@ -130,7 +130,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
                     : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800 hover:border-slate-500 shadow-lg'
                 }
             `}
-            title="Toggle Prayer (Safe Guess)"
+            title="Toggle Prayer Mode (Safe Guessing)"
           >
             {/* Glow effect when active */}
             {isPraying && (
@@ -145,7 +145,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
             </div>
             
             <span className={`hidden sm:block text-xs font-bold uppercase tracking-wider ${isPraying ? 'text-amber-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                {isPraying ? 'Praying' : 'Pray'}
+                {isPraying ? 'PRAYING' : 'PRAY'}
             </span>
           </button>
       </div>

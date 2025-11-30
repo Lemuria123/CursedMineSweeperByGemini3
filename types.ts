@@ -9,6 +9,7 @@ export interface CellData {
   status: CellStatus;
   neighborMines: number;
   isExploded?: boolean; // True if this specific mine was triggered
+  isMisflagged?: boolean; // True if user flagged this safe cell (revealed at game over)
 }
 
 export type GameStatus = 'idle' | 'playing' | 'won' | 'lost';

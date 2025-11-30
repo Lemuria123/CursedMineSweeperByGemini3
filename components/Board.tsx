@@ -8,9 +8,10 @@ interface BoardProps {
   gameStatus: GameStatus;
   onCellClick: (row: number, col: number) => void;
   onCellRightClick: (row: number, col: number, e: React.MouseEvent) => void;
+  highlightedCells?: string[]; // Optional for backward compat if needed, but we use it now
 }
 
-export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onCellRightClick }) => {
+export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onCellRightClick, highlightedCells = [] }) => {
   const rows = grid.length;
   const cols = grid[0].length;
 
@@ -35,6 +36,7 @@ export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onC
               onClick={() => onCellClick(cell.row, cell.col)}
               onRightClick={(e) => onCellRightClick(cell.row, cell.col, e)}
               disabled={gameStatus === 'won' || gameStatus === 'lost'}
+              isHighlighted={highlightedCells.includes(cell.id)}
             />
           </div>
         ))
