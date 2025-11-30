@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Flag, Bomb, X } from 'lucide-react';
 import { CellData } from '../types';
@@ -25,6 +26,10 @@ const NUMBER_COLORS = [
 
 export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightClick, disabled }) => {
   const { row, col, status, isMine, neighborMines, isExploded } = data;
+  
+  // Long press refs
+  const timerRef = useRef<any>(null);
+  const isLongPress = useRef(false);
 
   // Checkerboard pattern logic
   const isEven = (row + col) % 2 === 0;
@@ -51,6 +56,36 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
   // Ensure exploded cells appear on top of neighbors for the animation
   const zIndexClass = isExploded ? 'z-50' : 'z-0';
 
+  // --- Touch Logic for Long Press ---
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (disabled) return;
+    isLongPress.current = false;
+    timerRef.current = setTimeout(() => {
+      isLongPress.current = true;
+      if (navigator.vibrate) navigator.vibrate(50);
+      onRightClick(e as unknown as React.MouseEvent);
+    }, 500); // 500ms long press threshold
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // If long press triggered, prevent default click behavior
+    if (isLongPress.current) {
+       e.preventDefault();
+    }
+  };
+
+  const handleTouchMove = () => {
+    // Cancel long press if scrolling
+    if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+    }
+  };
+
   return (
     <div
       className={`
@@ -60,6 +95,9 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
       `}
       onClick={disabled ? undefined : onClick}
       onContextMenu={disabled ? undefined : onRightClick}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
       style={{ WebkitTapHighlightColor: 'transparent' }}
     >
       <AnimatePresence>

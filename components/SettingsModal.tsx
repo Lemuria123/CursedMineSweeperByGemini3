@@ -66,46 +66,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
-        className="relative bg-slate-800 border-2 border-slate-600 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+        className="relative bg-slate-800 border-2 border-slate-600 rounded-2xl p-5 max-w-md w-full shadow-2xl flex flex-col max-h-[85vh] overflow-y-auto no-scrollbar"
       >
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+          className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors z-10 bg-slate-800/50 rounded-full p-1"
         >
-          <X size={24} />
+          <X size={20} />
         </button>
 
         {/* Cursed Header Section */}
-        <div className="flex flex-col items-center text-center mb-6 pt-2">
-            <div className="p-4 rounded-full bg-red-500/10 text-red-500 mb-4 border border-red-500/20 shadow-[0_0_20px_rgba(220,38,38,0.2)]">
-                <Skull size={40} strokeWidth={2} />
+        <div className="flex flex-col items-center text-center mb-4 pt-1 shrink-0">
+            <div className="p-3 rounded-full bg-red-500/10 text-red-500 mb-3 border border-red-500/20 shadow-[0_0_20px_rgba(220,38,38,0.2)]">
+                <Skull size={32} strokeWidth={2} />
             </div>
-            <h2 className="text-3xl font-black text-white mb-4 tracking-tight">
+            <h2 className="text-2xl font-black text-white mb-2 tracking-tight">
                 You are <span className="text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.6)]">Cursed!</span>
             </h2>
-            <div className="space-y-3">
-                <div className="text-lg text-slate-300 font-medium leading-relaxed">
-                    <p className="text-red-400 font-bold mb-1">Guesses are punished.</p>
-                    <p>
-                        If a cell <span className="italic text-white">could</span> be a mine, it <span className="text-red-400 font-bold italic">IS</span> a mine.
-                    </p>
+            <div className="space-y-1 px-2">
+                <div className="text-sm text-slate-300 font-medium leading-tight">
+                    <span className="text-red-400 font-bold mr-1">Guesses are punished.</span>
+                    <span className="block sm:inline mt-1 sm:mt-0">
+                        If it <span className="italic text-white">could</span> be a mine, it <span className="text-red-400 font-bold italic">IS</span> a mine.
+                    </span>
                 </div>
-                <p className="text-amber-400 font-bold tracking-wide uppercase text-sm border-t border-slate-700 pt-3 mt-2 inline-block px-4">
+                <p className="text-amber-400 font-bold tracking-wide uppercase text-[10px] border-t border-slate-700 pt-2 mt-2 inline-block px-4">
                     Only prayer can save you.
                 </p>
             </div>
         </div>
 
         {/* Quick Presets */}
-        <div className="mb-6">
-            <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider text-center">Select Difficulty</label>
+        <div className="mb-5 shrink-0">
+            <label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-wider text-center">Select Difficulty</label>
             <div className="flex gap-2">
                 {difficulties.map(d => (
                     <button
                         key={d.name}
                         onClick={() => handlePresetClick(d)}
                         className={`
-                            flex-1 py-2 rounded-lg text-sm font-bold border transition-all
+                            flex-1 py-2 rounded-lg text-xs font-bold border transition-all
                             ${(rows === d.rows && cols === d.cols && mines === d.mines) 
                                 ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg transform scale-105' 
                                 : 'bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600'}
@@ -118,11 +118,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Custom Sliders */}
-        <div className="space-y-5 mb-8 bg-slate-900/50 p-4 rounded-xl border border-slate-700/50">
+        <div className="space-y-4 mb-6 bg-slate-900/50 p-4 rounded-xl border border-slate-700/50 shrink-0">
             {/* Rows */}
             <div>
-                <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><Grid3X3 size={14} /> Rows</span>
+                <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><Grid3X3 size={12} /> Rows</span>
                     <span className="font-mono font-bold text-emerald-400">{rows}</span>
                 </div>
                 <input 
@@ -134,8 +134,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
              {/* Cols */}
              <div>
-                <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><LayoutGrid size={14} /> Columns</span>
+                <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><LayoutGrid size={12} /> Columns</span>
                     <span className="font-mono font-bold text-emerald-400">{cols}</span>
                 </div>
                 <input 
@@ -147,9 +147,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
              {/* Mines */}
              <div>
-                <div className="flex justify-between text-sm mb-1">
-                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><Bomb size={14} /> Mines</span>
-                    <span className="font-mono font-bold text-red-400">{mines} <span className="text-slate-500 text-xs font-normal">({density}%)</span></span>
+                <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-400 flex items-center gap-2 font-semibold"><Bomb size={12} /> Mines</span>
+                    <span className="font-mono font-bold text-red-400">{mines} <span className="text-slate-500 text-[10px] font-normal">({density}%)</span></span>
                 </div>
                 <input 
                     type="range" min="1" max={maxMines} step="1" 
@@ -159,12 +159,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
         </div>
 
-        <button 
-            onClick={handleApply}
-            className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2"
-        >
-            Start New Game
-        </button>
+        <div className="mt-auto pt-2 pb-1 sticky bottom-0 bg-slate-800">
+             <button 
+                onClick={handleApply}
+                className="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2"
+            >
+                Start New Game
+            </button>
+        </div>
 
       </motion.div>
     </div>
