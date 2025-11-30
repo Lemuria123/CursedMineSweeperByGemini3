@@ -15,6 +15,8 @@ const DIFFICULTIES: Difficulty[] = [
   { name: 'Hard', rows: 16, cols: 30, mines: 99 },
 ];
 
+const STARTING_PRAYERS = 3;
+
 const App: React.FC = () => {
   const [difficulty, setDifficulty] = useState<Difficulty>(DIFFICULTIES[0]);
   const [gameMode, setGameMode] = useState<GameMode>('classic');
@@ -28,6 +30,8 @@ const App: React.FC = () => {
     mode: 'classic',
     flagsUsed: 0,
     timeElapsed: 0,
+    prayersLeft: STARTING_PRAYERS,
+    isPraying: false,
   });
 
   const [isBestTime, setIsBestTime] = useState(false);
@@ -43,6 +47,8 @@ const App: React.FC = () => {
       mode: mode,
       flagsUsed: 0,
       timeElapsed: 0,
+      prayersLeft: STARTING_PRAYERS,
+      isPraying: false,
     });
     setTimerInterval(null);
     setIsBestTime(false);
@@ -71,6 +77,16 @@ const App: React.FC = () => {
     };
   }, [gameState.status, timerInterval]);
 
+  const handleTogglePrayer = () => {
+      if (gameState.status !== 'playing' && gameState.status !== 'idle') return;
+      if (gameState.prayersLeft <= 0 && !gameState.isPraying) return;
+      
+      setGameState(prev => ({
+          ...prev,
+          isPraying: !prev.isPraying
+      }));
+  };
+
   // Click Handler
   const handleCellClick = (row: number, col: number) => {
     if (gameState.status === 'won' || gameState.status === 'lost') return;
@@ -90,15 +106,33 @@ const App: React.FC = () => {
       isFirstClick = true;
     }
 
-    // Reveal Logic (includes Hostile Logic if mode is strict)
-    const { grid: revealedGrid, exploded } = revealCellLogic(
+    // Reveal Logic (includes Hostile Logic & Prayer Logic)
+    const { grid: revealedGrid, exploded, prayerConsumed } = revealCellLogic(
       newGrid, 
       row, 
       col, 
       gameState.mode, 
-      isFirstClick
+      isFirstClick,
+      gameState.isPraying
     );
     newGrid = revealedGrid;
+
+    // Manage Prayer State
+    let newPrayersLeft = gameState.prayersLeft;
+    let newIsPraying = gameState.isPraying;
+
+    // If prayer was consumed (successfully saved OR failed due to logic guarantee)
+    // We deduct the count and turn off the state.
+    if (prayerConsumed) {
+        newPrayersLeft = Math.max(0, newPrayersLeft - 1);
+        newIsPraying = false; // Turn off prayer after use
+    } else if (gameState.isPraying && !exploded) {
+        // We had prayer on, but didn't hit a mine (safe cell).
+        // Usually, players want the prayer for the specific click.
+        // Let's turn it off so they don't waste it on the next safe click by accident,
+        // BUT do not deduct the count.
+        newIsPraying = false; 
+    }
 
     if (exploded) {
       newStatus = 'lost';
@@ -118,7 +152,9 @@ const App: React.FC = () => {
       ...prev,
       grid: newGrid,
       status: newStatus,
-      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed
+      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed,
+      prayersLeft: newPrayersLeft,
+      isPraying: newIsPraying
     }));
   };
 
@@ -157,6 +193,11 @@ const App: React.FC = () => {
           ? 'from-red-900/30 via-slate-900 to-black' 
           : 'from-slate-800 via-slate-900 to-black'
       }`} />
+
+      {/* Prayer Overlay (Visual Feedback) */}
+      {gameState.isPraying && (
+          <div className="absolute inset-0 z-0 pointer-events-none border-[10px] border-purple-500/20 animate-pulse shadow-[inset_0_0_100px_rgba(168,85,247,0.2)]" />
+      )}
 
       <div className="z-10 flex flex-col items-center w-full max-w-4xl">
         
@@ -201,7 +242,10 @@ const App: React.FC = () => {
           minesLeft={difficulty.mines - gameState.flagsUsed} 
           timer={gameState.timeElapsed} 
           status={gameState.status}
+          prayersLeft={gameState.prayersLeft}
+          isPraying={gameState.isPraying}
           onReset={() => initGame()}
+          onTogglePrayer={handleTogglePrayer}
         />
 
         <Board 

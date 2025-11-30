@@ -27,6 +27,8 @@ export interface GameState {
   mode: GameMode;
   flagsUsed: number;
   timeElapsed: number;
+  prayersLeft: number;
+  isPraying: boolean;
 }
 
 export interface GameRecord {
