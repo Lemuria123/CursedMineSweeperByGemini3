@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Grassland Minesweeper</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
@@ -45,6 +45,15 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #10b981; 
       }
+
+      /* Utility to hide scrollbar but keep functionality */
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+      }
     </style>
   <script type="importmap">
 {
@@ -58,7 +67,7 @@
 }
 </script>
 </head>
-  <body class="bg-slate-900 text-white overflow-hidden select-none">
+  <body class="bg-slate-900 text-white overflow-hidden select-none overscroll-none">
     <div id="root"></div>
   </body>
 </html>

@@ -18,10 +18,10 @@ export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onC
       className="bg-grass-darker p-3 rounded-lg shadow-2xl border-4 border-grass-dark/50"
       style={{
         display: 'grid',
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+        gridTemplateColumns: `repeat(${cols}, max-content)`, // Changed from minmax(0, 1fr) to max-content to prevent shrinking
         gap: '2px',
         width: 'fit-content',
-        maxWidth: '100%',
+        // removed maxWidth: '100%' to allow overflow scrolling
       }}
     >
       {grid.flatMap((row) =>

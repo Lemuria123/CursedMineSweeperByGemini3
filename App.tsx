@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Settings, Trophy, Skull } from 'lucide-react';
 import { GameState, Difficulty, CellData, GameStatus, GameMode } from './types';
 import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin } from './utils/gameLogic';
@@ -16,6 +16,7 @@ const DIFFICULTIES: Difficulty[] = [
 ];
 
 const STARTING_PRAYERS = 3;
+const DRAG_THRESHOLD = 5; // Reduced threshold for better sensitivity
 
 const App: React.FC = () => {
   const [difficulty, setDifficulty] = useState<Difficulty>(DIFFICULTIES[0]);
@@ -37,6 +38,12 @@ const App: React.FC = () => {
   const [isBestTime, setIsBestTime] = useState(false);
   const [timerInterval, setTimerInterval] = useState<number | null>(null);
 
+  // --- Drag to Scroll State ---
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isDownRef = useRef(false);
+  const isDraggingRef = useRef(false);
+  const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+
   // Initialize Game
   const initGame = useCallback((diff: Difficulty = difficulty, mode: GameMode = gameMode) => {
     if (timerInterval) clearInterval(timerInterval);
@@ -52,6 +59,16 @@ const App: React.FC = () => {
     });
     setTimerInterval(null);
     setIsBestTime(false);
+    
+    // Center the board on init if possible
+    if (scrollContainerRef.current) {
+        const container = scrollContainerRef.current;
+        setTimeout(() => {
+            const centerX = (container.scrollWidth - container.clientWidth) / 2;
+            const centerY = (container.scrollHeight - container.clientHeight) / 2;
+            container.scrollTo({ left: centerX, top: centerY, behavior: 'smooth' });
+        }, 100);
+    }
   }, [difficulty, gameMode, timerInterval]);
 
   // Difficulty/Mode Change Handler
@@ -106,7 +123,7 @@ const App: React.FC = () => {
       isFirstClick = true;
     }
 
-    // Reveal Logic (includes Hostile Logic & Prayer Logic)
+    // Reveal Logic
     const { grid: revealedGrid, exploded, prayerConsumed } = revealCellLogic(
       newGrid, 
       row, 
@@ -121,16 +138,10 @@ const App: React.FC = () => {
     let newPrayersLeft = gameState.prayersLeft;
     let newIsPraying = gameState.isPraying;
 
-    // If prayer was consumed (successfully saved OR failed due to logic guarantee)
-    // We deduct the count and turn off the state.
     if (prayerConsumed) {
         newPrayersLeft = Math.max(0, newPrayersLeft - 1);
-        newIsPraying = false; // Turn off prayer after use
+        newIsPraying = false; 
     } else if (gameState.isPraying && !exploded) {
-        // We had prayer on, but didn't hit a mine (safe cell).
-        // Usually, players want the prayer for the specific click.
-        // Let's turn it off so they don't waste it on the next safe click by accident,
-        // BUT do not deduct the count.
         newIsPraying = false; 
     }
 
@@ -142,7 +153,6 @@ const App: React.FC = () => {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
-      // Save Game Record
       const isRecord = isNewBest(gameState.timeElapsed, gameState.difficulty.name, gameState.mode);
       setIsBestTime(isRecord);
       saveGameRecord(gameState.timeElapsed, gameState.difficulty.name, gameState.mode);
@@ -184,76 +194,152 @@ const App: React.FC = () => {
     }));
   };
 
+  // --- Drag Handling Logic ---
+
+  // Handle move via window listener to avoid losing capture
+  const handlePointerMove = useCallback((e: PointerEvent) => {
+    if (!isDownRef.current || !scrollContainerRef.current) return;
+
+    const dx = e.clientX - startPosRef.current.x;
+    const dy = e.clientY - startPosRef.current.y;
+    
+    // Check threshold
+    if (!isDraggingRef.current) {
+        if (Math.sqrt(dx*dx + dy*dy) > DRAG_THRESHOLD) {
+            isDraggingRef.current = true;
+        }
+    }
+
+    if (isDraggingRef.current) {
+        scrollContainerRef.current.scrollLeft = startPosRef.current.scrollLeft - dx;
+        scrollContainerRef.current.scrollTop = startPosRef.current.scrollTop - dy;
+    }
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    isDownRef.current = false;
+    // We don't reset isDraggingRef immediately here because the 'click' event fires *after* pointerup.
+    // The click capture handler needs to know if a drag occurred.
+    // Cleanup listeners
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+    window.removeEventListener('pointercancel', handlePointerUp);
+  }, [handlePointerMove]);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!scrollContainerRef.current) return;
+    // Allow drag on any button, but typically left click is primary. 
+    // We start the "potential drag" state.
+    isDownRef.current = true;
+    isDraggingRef.current = false; // Reset drag state for new interaction
+    startPosRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: scrollContainerRef.current.scrollLeft,
+      scrollTop: scrollContainerRef.current.scrollTop,
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  };
+
+  // Intercept clicks if we were dragging
+  const handleClickCapture = (e: React.MouseEvent) => {
+    if (isDraggingRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 relative overflow-y-auto">
+    <div className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
       
-      {/* Background decoration */}
+      {/* Fixed Background Layer */}
       <div className={`absolute inset-0 z-0 pointer-events-none transition-all duration-1000 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] ${
         gameState.mode === 'strict' 
           ? 'from-red-900/30 via-slate-900 to-black' 
           : 'from-slate-800 via-slate-900 to-black'
       }`} />
 
-      {/* Prayer Overlay (Visual Feedback) */}
+      {/* Prayer Overlay */}
       {gameState.isPraying && (
           <div className="absolute inset-0 z-0 pointer-events-none border-[10px] border-purple-500/20 animate-pulse shadow-[inset_0_0_100px_rgba(168,85,247,0.2)]" />
       )}
 
-      <div className="z-10 flex flex-col items-center w-full max-w-4xl">
-        
-        {/* Header Section with Title and Action Buttons */}
-        <div className="flex items-center gap-3 mb-8">
-          <div className="flex flex-col items-center md:items-end md:flex-row gap-2">
-            <h1 className={`text-3xl md:text-5xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight text-center mr-2 ${
-               gameState.mode === 'strict' 
-               ? 'bg-gradient-to-r from-red-500 to-orange-500' 
-               : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
-            }`}>
-              {gameState.mode === 'strict' ? 'Strict Sweeper' : 'Grassland Sweeper'}
-            </h1>
-            {gameState.mode === 'strict' && (
-              <span className="bg-red-900/50 text-red-300 text-xs px-2 py-1 rounded border border-red-700 font-mono mb-2 md:mb-1">
-                NO GUESSING
-              </span>
-            )}
-          </div>
-          
-          <button 
-            onClick={() => setShowLeaderboard(true)}
-            className="p-2 rounded-full bg-slate-800 text-yellow-500 hover:text-yellow-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg"
-            title="Leaderboard"
-          >
-            <Trophy size={24} />
-          </button>
+      {/* Fixed Header Section */}
+      <div className="z-20 w-full flex-none p-4 pb-0 flex flex-col items-center pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-4xl">
+             <div className="flex items-center gap-3 mb-4 justify-between">
+                <div className="flex flex-col">
+                    <div className="flex items-center gap-2">
+                         <h1 className={`text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight ${
+                        gameState.mode === 'strict' 
+                        ? 'bg-gradient-to-r from-red-500 to-orange-500' 
+                        : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
+                        }`}>
+                        {gameState.mode === 'strict' ? 'Strict Sweeper' : 'Grassland'}
+                        </h1>
+                        {gameState.mode === 'strict' && (
+                        <span className="hidden sm:inline-block bg-red-900/50 text-red-300 text-[10px] px-1.5 py-0.5 rounded border border-red-700 font-mono">
+                            HARD
+                        </span>
+                        )}
+                    </div>
+                </div>
+                
+                <div className="flex gap-2">
+                    <button 
+                        onClick={() => setShowLeaderboard(true)}
+                        className="p-2 rounded-full bg-slate-800 text-yellow-500 hover:text-yellow-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg"
+                        title="Leaderboard"
+                    >
+                        <Trophy size={20} />
+                    </button>
 
-          <button 
-            onClick={() => setShowSettings(true)}
-            className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-all border border-slate-700 shadow-lg relative"
-            title="Settings"
-          >
-            <Settings size={24} />
-            {gameState.mode === 'strict' && (
-              <Skull size={12} className="absolute -top-1 -right-1 text-red-500" />
-            )}
-          </button>
+                    <button 
+                        onClick={() => setShowSettings(true)}
+                        className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-all border border-slate-700 shadow-lg relative"
+                        title="Settings"
+                    >
+                        <Settings size={20} />
+                        {gameState.mode === 'strict' && (
+                        <Skull size={10} className="absolute -top-1 -right-1 text-red-500" />
+                        )}
+                    </button>
+                </div>
+            </div>
+
+            <GameHeader 
+            minesLeft={difficulty.mines - gameState.flagsUsed} 
+            timer={gameState.timeElapsed} 
+            status={gameState.status}
+            prayersLeft={gameState.prayersLeft}
+            isPraying={gameState.isPraying}
+            onReset={() => initGame()}
+            onTogglePrayer={handleTogglePrayer}
+            />
         </div>
+      </div>
 
-        <GameHeader 
-          minesLeft={difficulty.mines - gameState.flagsUsed} 
-          timer={gameState.timeElapsed} 
-          status={gameState.status}
-          prayersLeft={gameState.prayersLeft}
-          isPraying={gameState.isPraying}
-          onReset={() => initGame()}
-          onTogglePrayer={handleTogglePrayer}
-        />
-
-        <Board 
-          grid={gameState.grid} 
-          gameStatus={gameState.status}
-          onCellClick={handleCellClick}
-          onCellRightClick={handleRightClick}
-        />
+      {/* Scrollable Game Board Area */}
+      <div 
+        ref={scrollContainerRef}
+        className="flex-1 overflow-hidden cursor-grab active:cursor-grabbing relative z-10 w-full"
+        onPointerDown={handlePointerDown}
+        // Pointer move/up are handled globally to prevent capture loss
+        onClickCapture={handleClickCapture} // Intercepts standard clicks
+        onContextMenuCapture={handleClickCapture} // Intercepts right-clicks if dragged
+      >
+          {/* Container centers content but allows it to grow */}
+          <div className="min-w-full min-h-full flex items-center justify-center p-8 lg:p-12 w-fit h-fit mx-auto">
+            <Board 
+                grid={gameState.grid} 
+                gameStatus={gameState.status}
+                onCellClick={handleCellClick}
+                onCellRightClick={handleRightClick}
+            />
+          </div>
       </div>
 
       <Modal 
