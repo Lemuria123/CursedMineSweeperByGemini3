@@ -1,3 +1,4 @@
+
 export type CellStatus = 'hidden' | 'revealed' | 'flagged';
 
 export interface CellData {
@@ -11,10 +12,11 @@ export interface CellData {
 }
 
 export type GameStatus = 'idle' | 'playing' | 'won' | 'lost';
-export type GameMode = 'classic' | 'strict';
+
+export type GameMode = 'strict' | 'standard';
 
 export interface Difficulty {
-  name: string;
+  name: string; // 'Custom' if manually changed
   rows: number;
   cols: number;
   mines: number;
@@ -24,17 +26,21 @@ export interface GameState {
   grid: CellData[][];
   status: GameStatus;
   difficulty: Difficulty;
-  mode: GameMode;
   flagsUsed: number;
   timeElapsed: number;
-  prayersLeft: number;
+  prayersUsed: number; // Changed from prayersLeft
   isPraying: boolean;
 }
 
-export interface GameRecord {
-  id: string;
-  date: number; // timestamp
-  time: number; // seconds
-  difficultyName: string; // 'Easy', 'Medium', 'Hard'
-  mode: GameMode;
+// Replaced GameRecord with RewardRecord
+export type RewardType = 'image' | 'text' | 'glitch';
+
+export interface CursedReward {
+  id: string; // unique based on difficulty params
+  date: number;
+  difficultyName: string;
+  title: string;
+  content: string; // URL or Text body
+  type: RewardType;
+  hue: number; // visual theme color
 }

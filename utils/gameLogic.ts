@@ -1,10 +1,19 @@
-import { CellData, Difficulty, GameMode } from '../types';
+
+import { CellData, Difficulty } from '../types';
 
 export const DIRECTIONS = [
   [-1, -1], [-1, 0], [-1, 1],
   [0, -1],           [0, 1],
   [1, -1],  [1, 0],  [1, 1]
 ];
+
+// Formula provided by user: Total * (20% + 1 / Total^0.65)
+// This reduces density for larger boards (e.g. from ~25% down to ~20%)
+export const calculateRecommendedMines = (rows: number, cols: number): number => {
+  const total = rows * cols;
+  const factor = 0.20 + (1 / Math.pow(total, 0.65));
+  return Math.floor(total * factor);
+};
 
 export const createEmptyGrid = (rows: number, cols: number): CellData[][] => {
   const grid: CellData[][] = [];
@@ -185,15 +194,11 @@ const isValidStateAround = (grid: CellData[][], cellsToCheck: {r: number, c: num
 // The Reaper: Tries to rearrange mines to ensure grid[row][col] is a mine
 const attemptStrictKill = (grid: CellData[][], targetRow: number, targetCol: number): boolean => {
     // 1. Identify all existing hidden mines that we can potentially move
-    // We sort them by distance to the target. 
-    // Why? Because swapping a nearby mine (local swap) is more likely to satisfy
-    // local constraints (like the "2" case the user encountered) than a far-away mine.
     const hiddenMines: {r: number, c: number, dist: number}[] = [];
     
     for(let r=0; r<grid.length; r++) {
         for(let c=0; c<grid[0].length; c++) {
             if (grid[r][c].isMine && grid[r][c].status === 'hidden') {
-                // Don't move the mine if it's already on the target (though strict logic handles this before)
                 if (r === targetRow && c === targetCol) continue;
                 
                 const dist = Math.abs(r - targetRow) + Math.abs(c - targetCol);
@@ -202,26 +207,18 @@ const attemptStrictKill = (grid: CellData[][], targetRow: number, targetCol: num
         }
     }
 
-    // Sort: Closest mines first (Priority to Local Swaps)
     hiddenMines.sort((a, b) => a.dist - b.dist);
 
-    // 2. Try to swap each candidate mine to the target position
     for (const mine of hiddenMines) {
-        // A. Perform Swap
         grid[mine.r][mine.c].isMine = false;
         grid[targetRow][targetCol].isMine = true;
 
-        // B. Check Consistency
-        // We only changed state at `mine` and `target`. 
-        // We need to ensure no REVEALED cell around `mine` or `target` became invalid.
         if (isValidStateAround(grid, [{r: mine.r, c: mine.c}, {r: targetRow, c: targetCol}])) {
-            // C. Success! Commit the changes by updating the internal counts
             updateLocalCounts(grid, mine.r, mine.c);
             updateLocalCounts(grid, targetRow, targetCol);
             return true;
         }
 
-        // D. Failed, Revert Swap
         grid[mine.r][mine.c].isMine = true;
         grid[targetRow][targetCol].isMine = false;
     }
@@ -260,7 +257,6 @@ export const revealCellLogic = (
   grid: CellData[][], 
   row: number, 
   col: number,
-  gameMode: GameMode,
   isFirstClick: boolean,
   isPraying: boolean
 ): { grid: CellData[][], exploded: boolean, prayerConsumed: boolean } => {
@@ -272,33 +268,34 @@ export const revealCellLogic = (
     return { grid: newGrid, exploded: false, prayerConsumed: false };
   }
 
-  // --- TRUE CURSED MODE LOGIC ---
-  if (gameMode === 'strict' && !isFirstClick) {
+  // --- STRICT MODE LOGIC (ALWAYS ON) ---
+  if (!isFirstClick) {
      if (isPraying) {
          // Prayer Logic: Try to SAVE the player
          if (newGrid[row][col].isMine) {
              moveMineToSafeSpot(newGrid, row, col);
+             // If we successfully moved it, prayer worked
              if (!newGrid[row][col].isMine) {
                  prayerConsumed = true;
              }
          } else {
-             // Was safe anyway, consume prayer
+             // Safe anyway, but prayer was active so we count it as usage (check)
              prayerConsumed = true;
          }
      } else {
          // Punishment Logic: Try to KILL the player
-         if (newGrid[row][col].isMine) {
-             // Already dead
-         } else {
-             const killed = attemptStrictKill(newGrid, row, col);
-             // if killed is true, execution continues to mine hit logic
+         if (!newGrid[row][col].isMine) {
+             // Try to find a valid configuration where this cell is a mine
+             attemptStrictKill(newGrid, row, col);
          }
      }
   }
 
   // --- STANDARD MINE HIT LOGIC ---
   if (newGrid[row][col].isMine) {
+    // If here, either no prayer, or prayer failed (rare logic lock)
     if (isPraying) { 
+        // Logic lock fallback
         if (isLogicallyGuaranteedMine(newGrid, row, col)) {
             newGrid[row][col].status = 'revealed';
             newGrid[row][col].isExploded = true;

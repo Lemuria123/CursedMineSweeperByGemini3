@@ -1,13 +1,15 @@
+
 import React from 'react';
-import { Bomb, Clock, Hand } from 'lucide-react';
+import { Bomb, Clock } from 'lucide-react';
 import { GameStatus } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { PrayingHands } from './PrayingHands';
 
 interface GameHeaderProps {
   minesLeft: number;
   timer: number;
   status: GameStatus;
-  prayersLeft: number;
+  prayersUsed: number;
   isPraying: boolean;
   onReset: () => void;
   onTogglePrayer: () => void;
@@ -17,7 +19,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   minesLeft, 
   timer, 
   status, 
-  prayersLeft,
+  prayersUsed,
   isPraying,
   onReset,
   onTogglePrayer
@@ -45,39 +47,39 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
 
       {/* Center Controls Group */}
       <div className="flex items-center gap-3">
-          {/* Prayer Button */}
+          {/* Prayer Button (Desperate Prayer Style) */}
           <button
             onClick={onTogglePrayer}
             disabled={status !== 'playing' && status !== 'idle'}
             className={`
-                relative w-12 h-12 sm:w-16 sm:h-16 flex flex-col items-center justify-center rounded-xl transition-all border shadow-lg
+                relative w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center rounded-xl transition-all border shadow-lg overflow-hidden group
                 ${isPraying 
-                    ? 'bg-purple-600 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.5)] text-white' 
-                    : prayersLeft > 0 
-                        ? 'bg-slate-700 border-slate-600 text-purple-400 hover:bg-slate-600' 
-                        : 'bg-slate-800/50 border-slate-700 text-slate-600 cursor-not-allowed'}
+                    ? 'bg-amber-600 border-amber-300 shadow-[0_0_25px_rgba(245,158,11,0.6)]' 
+                    : 'bg-slate-700 border-slate-600 hover:bg-slate-600'}
             `}
-            title={prayersLeft > 0 ? "Pray (Safe Guess)" : "No Prayers Left"}
+            title="Pray (Safe Guess)"
           >
             <AnimatePresence>
                 {isPraying && (
                     <motion.div
-                        initial={{ scale: 1.5, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 0.5 }}
-                        exit={{ scale: 0, opacity: 0 }}
-                        className="absolute inset-0 bg-purple-400 rounded-xl blur-md"
-                        transition={{ repeat: Infinity, duration: 1.5, repeatType: 'reverse' }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-gradient-to-t from-amber-500/50 via-yellow-400/20 to-transparent"
                     />
                 )}
             </AnimatePresence>
-            <Hand size={24} className={isPraying ? "fill-current animate-pulse" : ""} />
-            <span className="text-[10px] sm:text-xs font-bold mt-1">{prayersLeft}</span>
+            
+            {/* Increased size by making container fill button minus padding */}
+            <div className="relative z-10 w-full h-full p-2.5">
+                 <PrayingHands isActive={isPraying} />
+            </div>
           </button>
 
           {/* Reset / Status Button */}
           <button
             onClick={onReset}
-            className="w-12 h-12 sm:w-16 sm:h-16 flex items-center justify-center text-2xl sm:text-4xl bg-gradient-to-b from-slate-700 to-slate-800 rounded-xl shadow-[0_4px_0_rgb(30,41,59)] active:shadow-none active:translate-y-[4px] active:bg-slate-800 transition-all border border-slate-600 hover:brightness-110"
+            className="w-14 h-14 sm:w-16 sm:h-16 flex items-center justify-center text-2xl sm:text-4xl bg-gradient-to-b from-slate-700 to-slate-800 rounded-xl shadow-[0_4px_0_rgb(30,41,59)] active:shadow-none active:translate-y-[4px] active:bg-slate-800 transition-all border border-slate-600 hover:brightness-110"
             title="Reset Game"
           >
             {getStatusIcon()}

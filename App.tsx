@@ -1,43 +1,48 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Settings, Trophy, Skull } from 'lucide-react';
-import { GameState, Difficulty, CellData, GameStatus, GameMode } from './types';
-import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets } from './utils/gameLogic';
-import { saveGameRecord, isNewBest } from './utils/storage';
+import { Settings, BookOpen } from 'lucide-react';
+import { GameState, Difficulty, GameStatus, CursedReward } from './types';
+import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines } from './utils/gameLogic';
+import { hasRewardForDifficulty, saveReward } from './utils/storage';
+import { fetchCursedReward } from './utils/cursedContent';
 import { Board } from './components/Board';
 import { GameHeader } from './components/GameHeader';
 import { SettingsModal } from './components/SettingsModal';
-import { LeaderboardModal } from './components/LeaderboardModal';
+import { GrimoireModal } from './components/LeaderboardModal'; 
 import { Modal } from './components/Modal';
 
+// Updated logic: Default mines are now calculated based on the new density formula.
+// Easy: 9x9 (81) -> ~21 mines
+// Medium: 16x16 (256) -> ~58 mines
+// Hard: 16x30 (480) -> ~105 mines
 const DIFFICULTIES: Difficulty[] = [
-  { name: 'Easy', rows: 9, cols: 9, mines: 10 },
-  { name: 'Medium', rows: 16, cols: 16, mines: 40 },
-  { name: 'Hard', rows: 16, cols: 30, mines: 99 },
+  { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) },
+  { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) }, 
+  { name: 'Hard', rows: 16, cols: 30, mines: calculateRecommendedMines(16, 30) },
 ];
 
-const STARTING_PRAYERS = 3;
-const DRAG_THRESHOLD = 5; // Reduced threshold for better sensitivity
+const DRAG_THRESHOLD = 5;
 
 const App: React.FC = () => {
   const [difficulty, setDifficulty] = useState<Difficulty>(DIFFICULTIES[0]);
-  const [gameMode, setGameMode] = useState<GameMode>('classic');
   const [showSettings, setShowSettings] = useState(false);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showGrimoire, setShowGrimoire] = useState(false);
   
   const [gameState, setGameState] = useState<GameState>({
     grid: createEmptyGrid(DIFFICULTIES[0].rows, DIFFICULTIES[0].cols),
     status: 'idle',
     difficulty: DIFFICULTIES[0],
-    mode: 'classic',
     flagsUsed: 0,
     timeElapsed: 0,
-    prayersLeft: STARTING_PRAYERS,
+    prayersUsed: 0,
     isPraying: false,
   });
 
-  const [isBestTime, setIsBestTime] = useState(false);
   const [isGameOverModalOpen, setIsGameOverModalOpen] = useState(false);
   const [timerInterval, setTimerInterval] = useState<number | null>(null);
+
+  // New State for Just Unlocked Reward
+  const [newUnlockedReward, setNewUnlockedReward] = useState<CursedReward | null>(null);
 
   // --- Drag to Scroll State ---
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -46,23 +51,21 @@ const App: React.FC = () => {
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // Initialize Game
-  const initGame = useCallback((diff: Difficulty = difficulty, mode: GameMode = gameMode) => {
+  const initGame = useCallback((diff: Difficulty = difficulty) => {
     if (timerInterval) clearInterval(timerInterval);
     setGameState({
       grid: createEmptyGrid(diff.rows, diff.cols),
       status: 'idle',
       difficulty: diff,
-      mode: mode,
       flagsUsed: 0,
       timeElapsed: 0,
-      prayersLeft: STARTING_PRAYERS,
+      prayersUsed: 0,
       isPraying: false,
     });
     setTimerInterval(null);
-    setIsBestTime(false);
     setIsGameOverModalOpen(false);
+    setNewUnlockedReward(null);
     
-    // Center the board on init if possible
     if (scrollContainerRef.current) {
         const container = scrollContainerRef.current;
         setTimeout(() => {
@@ -71,13 +74,12 @@ const App: React.FC = () => {
             container.scrollTo({ left: centerX, top: centerY, behavior: 'smooth' });
         }, 100);
     }
-  }, [difficulty, gameMode, timerInterval]);
+  }, [difficulty, timerInterval]);
 
-  // Difficulty/Mode Change Handler
-  const handleSettingsChange = (newDiff: Difficulty, newMode: GameMode) => {
+  // Difficulty Change Handler
+  const handleDifficultyChange = (newDiff: Difficulty) => {
     setDifficulty(newDiff);
-    setGameMode(newMode);
-    initGame(newDiff, newMode);
+    initGame(newDiff);
   };
 
   // Timer Logic
@@ -99,7 +101,8 @@ const App: React.FC = () => {
   // Handle Game Over Modal Visibility
   useEffect(() => {
     if (gameState.status === 'won' || gameState.status === 'lost') {
-        setIsGameOverModalOpen(true);
+        // Small delay to allow explosion animation or final reveal
+        setTimeout(() => setIsGameOverModalOpen(true), 500);
     } else {
         setIsGameOverModalOpen(false);
     }
@@ -107,12 +110,7 @@ const App: React.FC = () => {
 
   const handleTogglePrayer = () => {
       if (gameState.status !== 'playing' && gameState.status !== 'idle') return;
-      if (gameState.prayersLeft <= 0 && !gameState.isPraying) return;
-      
-      setGameState(prev => ({
-          ...prev,
-          isPraying: !prev.isPraying
-      }));
+      setGameState(prev => ({ ...prev, isPraying: !prev.isPraying }));
   };
 
   // Click Handler
@@ -121,11 +119,10 @@ const App: React.FC = () => {
 
     let newGrid = [...gameState.grid];
     let newStatus: GameStatus = gameState.status;
-    let newPrayersLeft = gameState.prayersLeft;
+    let newPrayersUsed = gameState.prayersUsed;
     let newIsPraying = gameState.isPraying;
 
     const cell = newGrid[row][col];
-
     if (cell.status === 'flagged') return;
 
     // First Click: Generate Mines
@@ -138,51 +135,22 @@ const App: React.FC = () => {
     if (cell.status === 'revealed') {
         // --- CHORDING LOGIC ---
         const targets = getChordTargets(newGrid, row, col);
-        
         for (const target of targets) {
-            // Apply reveal logic to each target
-            // NOTE: Strict mode punishment applies to EACH cell individually during chording
-            const result = revealCellLogic(
-                newGrid, 
-                target.r, 
-                target.c, 
-                gameState.mode, 
-                false, // Never first click for chording
-                newIsPraying
-            );
-            newGrid = result.grid; // Update grid reference for next iteration
-
-            // Update Prayer State
-            if (result.prayerConsumed) {
-                newPrayersLeft = Math.max(0, newPrayersLeft - 1);
-                if (newPrayersLeft === 0) newIsPraying = false;
-            }
-
-            // Check Explosion
+            const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying);
+            newGrid = result.grid; 
+            if (result.prayerConsumed) newPrayersUsed++;
             if (result.exploded) {
                 newStatus = 'lost';
                 newGrid = revealAllMines(newGrid);
                 newGrid[target.r][target.c].isExploded = true;
-                break; // Stop chording if dead
+                break;
             }
         }
     } else {
         // --- STANDARD REVEAL LOGIC ---
-        const result = revealCellLogic(
-            newGrid, 
-            row, 
-            col, 
-            gameState.mode, 
-            gameState.status === 'idle', // Is first click?
-            newIsPraying
-        );
+        const result = revealCellLogic(newGrid, row, col, gameState.status === 'idle', newIsPraying);
         newGrid = result.grid;
-
-        if (result.prayerConsumed) {
-            newPrayersLeft = Math.max(0, newPrayersLeft - 1);
-            if (newPrayersLeft === 0) newIsPraying = false;
-        }
-
+        if (result.prayerConsumed) newPrayersUsed++;
         if (result.exploded) {
             newStatus = 'lost';
             newGrid = revealAllMines(newGrid);
@@ -195,17 +163,30 @@ const App: React.FC = () => {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
-      const isRecord = isNewBest(gameState.timeElapsed, gameState.difficulty.name, gameState.mode);
-      setIsBestTime(isRecord);
-      saveGameRecord(gameState.timeElapsed, gameState.difficulty.name, gameState.mode);
+      // REWARD LOGIC
+      if (newPrayersUsed === 0) {
+          // Rule: To earn a reward, the mine count must be at least the recommended amount for this size
+          const minMinesRequired = calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols);
+          
+          if (gameState.difficulty.mines >= minMinesRequired) {
+            // It's a valid ACED win. Check if we should unlock a reward.
+            if (!hasRewardForDifficulty(gameState.difficulty)) {
+                // Trigger async fetch
+                fetchCursedReward(gameState.difficulty).then(reward => {
+                    saveReward(reward);
+                    setNewUnlockedReward(reward);
+                });
+            }
+          }
+      }
     }
 
     setGameState(prev => ({
       ...prev,
       grid: newGrid,
       status: newStatus,
-      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed, // Auto flag all on win doesn't update count usually, but kept for consistency
-      prayersLeft: newPrayersLeft,
+      flagsUsed: newStatus === 'won' ? prev.difficulty.mines : prev.flagsUsed, 
+      prayersUsed: newPrayersUsed,
       isPraying: newIsPraying
     }));
   };
@@ -217,7 +198,6 @@ const App: React.FC = () => {
 
     const newGrid = gameState.grid.map(row => row.map(cell => ({ ...cell })));
     const cell = newGrid[row][col];
-
     if (cell.status === 'revealed') return;
 
     let flagsChange = 0;
@@ -237,21 +217,13 @@ const App: React.FC = () => {
   };
 
   // --- Drag Handling Logic ---
-
-  // Handle move via window listener to avoid losing capture
   const handlePointerMove = useCallback((e: PointerEvent) => {
     if (!isDownRef.current || !scrollContainerRef.current) return;
-
     const dx = e.clientX - startPosRef.current.x;
     const dy = e.clientY - startPosRef.current.y;
-    
-    // Check threshold
     if (!isDraggingRef.current) {
-        if (Math.sqrt(dx*dx + dy*dy) > DRAG_THRESHOLD) {
-            isDraggingRef.current = true;
-        }
+        if (Math.sqrt(dx*dx + dy*dy) > DRAG_THRESHOLD) isDraggingRef.current = true;
     }
-
     if (isDraggingRef.current) {
         scrollContainerRef.current.scrollLeft = startPosRef.current.scrollLeft - dx;
         scrollContainerRef.current.scrollTop = startPosRef.current.scrollTop - dy;
@@ -260,9 +232,6 @@ const App: React.FC = () => {
 
   const handlePointerUp = useCallback(() => {
     isDownRef.current = false;
-    // We don't reset isDraggingRef immediately here because the 'click' event fires *after* pointerup.
-    // The click capture handler needs to know if a drag occurred.
-    // Cleanup listeners
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
     window.removeEventListener('pointercancel', handlePointerUp);
@@ -270,23 +239,19 @@ const App: React.FC = () => {
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!scrollContainerRef.current) return;
-    // Allow drag on any button, but typically left click is primary. 
-    // We start the "potential drag" state.
     isDownRef.current = true;
-    isDraggingRef.current = false; // Reset drag state for new interaction
+    isDraggingRef.current = false; 
     startPosRef.current = {
       x: e.clientX,
       y: e.clientY,
       scrollLeft: scrollContainerRef.current.scrollLeft,
       scrollTop: scrollContainerRef.current.scrollTop,
     };
-
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerUp);
   };
 
-  // Intercept clicks if we were dragging
   const handleClickCapture = (e: React.MouseEvent) => {
     if (isDraggingRef.current) {
       e.stopPropagation();
@@ -298,11 +263,7 @@ const App: React.FC = () => {
     <div className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
       
       {/* Fixed Background Layer */}
-      <div className={`absolute inset-0 z-0 pointer-events-none transition-all duration-1000 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] ${
-        gameState.mode === 'strict' 
-          ? 'from-red-900/30 via-slate-900 to-black' 
-          : 'from-slate-800 via-slate-900 to-black'
-      }`} />
+      <div className="absolute inset-0 z-0 pointer-events-none transition-all duration-1000 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/30 via-slate-900 to-black" />
 
       {/* Prayer Overlay */}
       {gameState.isPraying && (
@@ -311,33 +272,24 @@ const App: React.FC = () => {
 
       {/* Fixed Header Section */}
       <div className="z-20 w-full flex-none p-4 pb-0 flex flex-col items-center pointer-events-none">
-        {/* Unified Max Width Container for HUD */}
         <div className="pointer-events-auto w-full max-w-2xl">
              <div className="flex items-center gap-3 mb-4 justify-between">
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2">
-                         <h1 className={`text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight ${
-                        gameState.mode === 'strict' 
-                        ? 'bg-gradient-to-r from-red-500 to-orange-500' 
-                        : 'bg-gradient-to-r from-emerald-400 to-cyan-400'
-                        }`}>
-                        {gameState.mode === 'strict' ? 'Cursed Mine Sweeper' : 'Grassland Sweeper'}
+                         <h1 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight bg-gradient-to-r from-red-500 to-orange-500">
+                           Cursed Mine Sweeper
                         </h1>
-                        {gameState.mode === 'strict' && (
-                        <span className="hidden sm:inline-block bg-red-900/50 text-red-300 text-[10px] px-1.5 py-0.5 rounded border border-red-700 font-mono">
-                            CURSED
-                        </span>
-                        )}
                     </div>
                 </div>
                 
                 <div className="flex gap-2">
                     <button 
-                        onClick={() => setShowLeaderboard(true)}
-                        className="p-2 rounded-full bg-slate-800 text-yellow-500 hover:text-yellow-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg"
-                        title="Leaderboard"
+                        onClick={() => setShowGrimoire(true)}
+                        className="p-2 rounded-full bg-slate-800 text-amber-500 hover:text-amber-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg group relative"
+                        title="The Grimoire"
                     >
-                        <Trophy size={20} />
+                        <BookOpen size={20} />
+                        {/* Notification dot if something is unlocked but not viewed? For now just simple */}
                     </button>
 
                     <button 
@@ -346,18 +298,15 @@ const App: React.FC = () => {
                         title="Settings"
                     >
                         <Settings size={20} />
-                        {gameState.mode === 'strict' && (
-                        <Skull size={10} className="absolute -top-1 -right-1 text-red-500" />
-                        )}
                     </button>
                 </div>
             </div>
 
             <GameHeader 
-            minesLeft={difficulty.mines - gameState.flagsUsed} 
+            minesLeft={gameState.difficulty.mines - gameState.flagsUsed} 
             timer={gameState.timeElapsed} 
             status={gameState.status}
-            prayersLeft={gameState.prayersLeft}
+            prayersUsed={gameState.prayersUsed}
             isPraying={gameState.isPraying}
             onReset={() => initGame()}
             onTogglePrayer={handleTogglePrayer}
@@ -370,11 +319,9 @@ const App: React.FC = () => {
         ref={scrollContainerRef}
         className="flex-1 overflow-hidden cursor-grab active:cursor-grabbing relative z-10 w-full"
         onPointerDown={handlePointerDown}
-        // Pointer move/up are handled globally to prevent capture loss
-        onClickCapture={handleClickCapture} // Intercepts standard clicks
-        onContextMenuCapture={handleClickCapture} // Intercepts right-clicks if dragged
+        onClickCapture={handleClickCapture} 
+        onContextMenuCapture={handleClickCapture} 
       >
-          {/* Container centers content but allows it to grow */}
           <div className="min-w-full min-h-full flex items-center justify-center p-8 lg:p-12 w-fit h-fit mx-auto">
             <Board 
                 grid={gameState.grid} 
@@ -389,7 +336,8 @@ const App: React.FC = () => {
           <Modal 
             status={gameState.status} 
             time={gameState.timeElapsed} 
-            isBestTime={isBestTime}
+            prayersUsed={gameState.prayersUsed}
+            newReward={newUnlockedReward}
             onRestart={() => initGame()} 
             onClose={() => setIsGameOverModalOpen(false)}
           />
@@ -399,18 +347,14 @@ const App: React.FC = () => {
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
         currentDifficulty={difficulty}
-        onDifficultyChange={(d) => handleSettingsChange(d, gameMode)}
+        onDifficultyChange={handleDifficultyChange}
         difficulties={DIFFICULTIES}
-        gameMode={gameMode}
-        onGameModeChange={(m) => handleSettingsChange(difficulty, m)}
       />
 
-      <LeaderboardModal
-        isOpen={showLeaderboard}
-        onClose={() => setShowLeaderboard(false)}
+      <GrimoireModal
+        isOpen={showGrimoire}
+        onClose={() => setShowGrimoire(false)}
         difficulties={DIFFICULTIES}
-        currentDifficultyName={difficulty.name}
-        gameMode={gameState.mode}
       />
     </div>
   );

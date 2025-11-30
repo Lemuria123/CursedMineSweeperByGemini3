@@ -1,45 +1,33 @@
-import { GameRecord, GameMode } from '../types';
 
-const STORAGE_KEY = 'minesweeper_records_v2'; // Bumped version for new schema
+import { CursedReward, Difficulty } from '../types';
 
-// Helper to get all records
-const getAllRecords = (): GameRecord[] => {
+const REWARD_STORAGE_KEY = 'cursed_minesweeper_grimoire_v1';
+
+const getRewards = (): CursedReward[] => {
   try {
-    const data = localStorage.getItem(STORAGE_KEY);
+    const data = localStorage.getItem(REWARD_STORAGE_KEY);
     return data ? JSON.parse(data) : [];
   } catch (e) {
-    console.error("Failed to load records", e);
+    console.error("Failed to load grimoire", e);
     return [];
   }
 };
 
-export const saveGameRecord = async (time: number, difficultyName: string, mode: GameMode = 'classic'): Promise<GameRecord> => {
-  const records = getAllRecords();
-  const newRecord: GameRecord = {
-    id: Date.now().toString(),
-    date: Date.now(),
-    time,
-    difficultyName,
-    mode,
-  };
-  
-  records.push(newRecord);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-  
-  return newRecord;
+export const hasRewardForDifficulty = (diff: Difficulty): boolean => {
+  const id = `${diff.rows}-${diff.cols}-${diff.mines}`;
+  const rewards = getRewards();
+  return rewards.some(r => r.id === id);
 };
 
-export const getLeaderboard = async (difficultyName: string, mode: GameMode = 'classic'): Promise<GameRecord[]> => {
-  const records = getAllRecords();
-  return records
-    .filter(r => r.difficultyName === difficultyName && (r.mode === mode || (!r.mode && mode === 'classic')))
-    .sort((a, b) => a.time - b.time)
-    .slice(0, 10);
+export const saveReward = (reward: CursedReward) => {
+  const rewards = getRewards();
+  // Deduplicate just in case
+  if (rewards.some(r => r.id === reward.id)) return;
+  
+  rewards.push(reward);
+  localStorage.setItem(REWARD_STORAGE_KEY, JSON.stringify(rewards));
 };
 
-export const isNewBest = (time: number, difficultyName: string, mode: GameMode = 'classic'): boolean => {
-    const records = getAllRecords().filter(r => r.difficultyName === difficultyName && (r.mode === mode || (!r.mode && mode === 'classic')));
-    if (records.length === 0) return true;
-    const bestTime = Math.min(...records.map(r => r.time));
-    return time < bestTime;
-}
+export const getAllRewards = (): CursedReward[] => {
+  return getRewards().sort((a, b) => b.date - a.date);
+};
