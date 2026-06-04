@@ -1,0 +1,66 @@
+// API client — wraps all backend calls.
+
+const BASE_URL = 'http://localhost:38001';
+
+async function request<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ── Auth ──
+
+export async function register(platform: string, platform_id: string) {
+  return request<{ account_id: string; nickname: string | null; created_at: number }>('/api/auth', {
+    method: 'POST',
+    body: JSON.stringify({ platform, platform_id }),
+  });
+}
+
+export async function getAccount(id: string) {
+  return request<{ id: string; platform: string; nickname: string | null; created_at: number }>(`/api/auth/${id}`);
+}
+
+export async function setNickname(id: string, nickname: string) {
+  return request<{ ok: boolean; nickname: string }>(`/api/auth/${id}/nickname`, {
+    method: 'PATCH',
+    body: JSON.stringify({ nickname }),
+  });
+}
+
+// ── Nonce ──
+
+export async function getNonce(accountId: string) {
+  return request<{ nonce: string; expires_at: number }>(`/api/nonce?account_id=${encodeURIComponent(accountId)}`);
+}
+
+// ── Submit ──
+
+export async function submitGame(accountId: string, payload: string) {
+  return request<{ valid: boolean; reason: string | null; reward: { id: string; title: string } | null }>('/api/submit', {
+    method: 'POST',
+    body: JSON.stringify({ account_id: accountId, payload }),
+  });
+}
+
+// ── Records ──
+
+export async function getLeaderboard(rows: number, cols: number) {
+  return request<{ rank: number; nickname: string; time_ms: number; submitted_at: number }[]>(`/api/records/${rows}/${cols}`);
+}
+
+export async function getMyRecords(accountId: string) {
+  return request<{ rows: number; cols: number; mines: number; time_ms: number; submitted_at: number }[]>(`/api/records/me/${accountId}`);
+}
+
+// ── Rewards ──
+
+export async function getRewards(accountId: string) {
+  return request<{ id: string; difficulty_name: string; rows: number; cols: number; mines: number; title: string; content: string; type: string; hue: number; submitted_at: number }[]>(`/api/rewards/${accountId}`);
+}
