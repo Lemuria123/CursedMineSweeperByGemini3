@@ -169,6 +169,19 @@ async function start() {
     });
   });
 
+  // ── GET /api/records/me/:account_id — personal bests (must be before :rows/:cols) ──
+  app.get('/api/records/me/:account_id', (req, res) => {
+    const records = all(
+      `SELECT rows, cols, mines, MIN(time_ms) as time_ms, submitted_at
+       FROM records
+       WHERE account_id = ? AND validated = 1
+       GROUP BY rows, cols
+       ORDER BY rows, cols`,
+      [req.params.account_id],
+    );
+    res.json(records);
+  });
+
   // ── GET /api/records/:rows/:cols — leaderboard (top 100) ──
   app.get('/api/records/:rows/:cols', (req, res) => {
     const rows = parseInt(req.params.rows);
@@ -195,19 +208,6 @@ async function start() {
     }));
 
     res.json(ranked);
-  });
-
-  // ── GET /api/records/me/:account_id — personal bests ──
-  app.get('/api/records/me/:account_id', (req, res) => {
-    const records = all(
-      `SELECT rows, cols, mines, MIN(time_ms) as time_ms, submitted_at
-       FROM records
-       WHERE account_id = ? AND validated = 1
-       GROUP BY rows, cols
-       ORDER BY rows, cols`,
-      [req.params.account_id],
-    );
-    res.json(records);
   });
 
   // ── GET /api/rewards/:account_id — player rewards ──
