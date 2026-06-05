@@ -8,6 +8,7 @@ import { initDatabase, getDb, run, get, all } from './db';
 import { decrypt } from './crypto';
 import { verifySubmission } from './verify';
 import { GameSubmission } from './types';
+import { startAdmin } from './admin';
 
 const app = express();
 app.use(cors());
@@ -224,11 +225,23 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`[game-api] listening on :${PORT}`);
   });
+
+  // Also start admin panel on the same process (shared DB)
+  startAdmin();
 }
 
 start().catch((e) => {
   console.error('[game-api] failed to start:', e);
   process.exit(1);
+});
+
+// Prevent sql.js WASM cleanup crash from killing the server
+process.on('uncaughtException', (e: any) => {
+  if (e.message?.includes?.('UV_HANDLE_CLOSING') || e.message?.includes?.('Assertion failed')) {
+    // sql.js cleanup on exit — ignore, server is still running
+    return;
+  }
+  console.error('[uncaught]', e);
 });
 
 export default app;

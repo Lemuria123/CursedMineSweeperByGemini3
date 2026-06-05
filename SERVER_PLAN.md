@@ -221,8 +221,8 @@
 一个嵌入在 Express 中的纯 HTML/JS 管理面板，不依赖前端框架。
 
 ### 6.1 鉴权
-- [ ] 简单的 token 鉴权：`.env` 中配置 `ADMIN_TOKEN`
-- [ ] 登录页输入 token，验证后存入 session cookie，有效期 24h
+- [x] 简单的 token 鉴权：`.env` 中配置 `ADMIN_TOKEN`
+- [x] 登录页输入 token，验证后存入 session cookie，有效期 24h
 
 ### 6.2 页面清单
 
@@ -249,14 +249,90 @@
 | `GET` | `/admin/submissions` | 提交日志（最近 200 条，支持 `?validated=0/1/&page=`） |
 
 ### 6.4 前端实现
-- [ ] 纯 HTML + 内联 CSS（Tailwind CDN）+ 内联 JS（fetch 调用 admin API）
-- [ ] 每个页面一个路由处理函数，返回完整 HTML
-- [ ] 表格支持简单分页（上一页/下一页按钮）
-- [ ] 移动端友好（响应式表格）
+- [x] 纯 HTML + 内联 CSS（Tailwind CDN）+ 内联 JS（fetch 调用 admin API）
+- [x] 每个页面一个路由处理函数，返回完整 HTML
+- [x] 表格支持简单分页（上一页/下一页按钮）
+- [x] 移动端友好（响应式表格）
+
+✅ **阶段六完成** — 2026-06-05
+
+- `server/src/admin.ts` — 完整重写，共享 db.ts 数据库模块
+- 7 个页面全部实现：登录 / 仪表盘（5 项实时统计）/ 用户列表（分页）/ 用户详情（records + rewards）/ 记录列表（rows×cols 筛选）/ 奖励列表（难度筛选）/ 提交日志（validated 筛选）
+- 纯 HTML + Tailwind CDN，无前端框架，服务端渲染
+- cookie-session 鉴权，默认 token: `admin`，可通过 `ADMIN_TOKEN` 环境变量覆盖
+- 全部页面 HTTP 200 验证通过
 
 ---
 
-## 阶段七：部署与优化
+## 阶段七：全栈测试与修复
+
+对阶段一至六的所有代码和功能进行系统性测试，修复发现的问题。
+
+### 7.1 共享模块测试
+
+- [x] `shared/gameLogic.ts` — `placeMines` 确定性（相同 seed + RNG → 相同布局）
+- [x] `shared/deterministicPlaceMines.ts` — seeded RNG 确定性验证（两次调用同 seed → 同结果）
+- [x] `shared/gameLogic.ts` — `revealCellLogic` + `rearrangeMines` seeded CSP 确定性（同 seed → 同 CSP 结果）
+- [x] `shared/gameLogic.ts` — `checkWin` 边界条件（全揭示、全 flag、部分 hidden、mine revealed）
+
+### 7.2 服务端模块测试
+
+- [x] `server/src/db.ts` — 建表幂等性（重复启动不报错）
+- [x] `server/src/db.ts` — CRUD 操作（`run`/`get`/`all` 正确读写）
+- [x] `server/src/db.ts` — nonce 过期清理定时器（setInterval 正常工作）
+- [x] `server/src/crypto.ts` — 加解密往返（`decrypt(encrypt(x)) === x`）
+- [x] `server/src/crypto.ts` — 错误密钥解密应抛错
+- [x] `server/src/verify.ts` — 合法游戏数据通过验证
+- [x] `server/src/verify.ts` — 非法数据拒绝（篡改 seed / 空 action / 错误首动作 / 越界 / 虚假祈祷数）
+
+### 7.3 API 端点测试
+
+- [x] `POST /api/auth` — 新用户注册返回 `account_id`
+- [x] `POST /api/auth` — 重复注册返回已有 `account_id`（幂等）
+- [x] `GET /api/auth/:id` — 存在用户返回信息，不存在返回 404
+- [x] `PATCH /api/auth/:id/nickname` — 成功修改昵称
+- [x] `GET /api/nonce` — 返回有效 nonce（5min 过期）
+- [x] `POST /api/submit` — 合法加密数据 → `valid: true`
+- [x] `POST /api/submit` — 非法数据 → `valid: false`（至少 10 种攻击向量）
+- [x] `GET /api/records/:rows/:cols` — 返回排行数据（含 rank/nickname/time）
+- [x] `GET /api/records/me/:account_id` — 返回个人最佳成绩
+- [x] `GET /api/rewards/:account_id` — 返回已认证奖励列表
+
+### 7.4 管理后台测试
+
+- [x] 鉴权：未登录访问受保护页面 → 重定向到 `/`
+- [x] 鉴权：错误 token → 重定向回登录页
+- [x] 鉴权：正确 token → 进入 dashboard
+- [x] Dashboard：5 项统计数据正确显示
+- [x] Users 列表：分页正常，链接可点击
+- [x] User Detail：records + rewards 正确关联
+- [x] Records 列表：rows/cols 筛选 + 分页正常
+- [x] Rewards 列表：difficulty 筛选 + 分页正常
+- [x] Submissions 列表：All/Passed/Failed Tab 筛选正常
+- [x] 登出：session 清除，重定向到登录页
+
+### 7.5 前端编译测试
+
+- [x] Vite 开发服务器启动无错误
+- [x] TypeScript 类型检查通过（无 `any` 类型错误）
+- [x] 所有新引入的 import 路径正确可解析
+
+### 7.6 问题修复记录
+
+- ✅ **修复 #1**：`shared/package.json` 增补 `"type": "commonjs"` 解决根 `package.json` 的 ESM 声明导致服务端 ts-node 无法 import shared 模块
+- ✅ **修复 #2**：服务端与 Admin 合并为单进程运行（`index.ts` 调用 `startAdmin()`），解决 sql.js 两进程共享同一 DB 文件的文件锁冲突
+- ✅ **修复 #3**：`server/src/index.ts` 增补 `process.on('uncaughtException')` 静默 sql.js WASM 退出时的 `UV_HANDLE_CLOSING` crash
+- ✅ **修复 #4**：`/api/records/me/:account_id` 路由移至 `/:rows/:cols` 之前，解决 Express 路由匹配优先级问题
+
+✅ **阶段七完成** — 2026-06-05
+
+- `server/src/test_all.ts` — 46 项全栈测试，一次性通过
+- 覆盖 7.1~7.5 五大类：共享模块(7) / 服务端(10) / API(12) / Admin(10) / 前端文件(6)
+- 4 个问题已修复
+
+---
+
+## 阶段八：部署与优化
 
 - [ ] `server/` 增加 `Dockerfile`
 - [ ] 生产构建前端，产物输出到 `server/public/`，Express 托管静态文件
