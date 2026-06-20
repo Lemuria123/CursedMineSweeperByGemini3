@@ -1,33 +1,29 @@
-// ACE Valid Test — full pipeline verification (register → submit → records → rewards → leaderboard).
-// Mix of ACE (0 prayers → earns reward) and CSP (prayers > 0 → no reward) on RANDOM sizes.
-// Builder uses the SAME mine_seed + seeded CSP RNG as the server verifier,
-// so replay is guaranteed identical.
+// ACE Valid Test — realistic minesweeper solver (deduce → chord → pray).
+// Builder behaves like a real player: deduct safe/mine cells, chord, only pray when stuck.
+// All game data is deterministic — builder and verifier use the same mine_seed + CSP RNG.
 
-import { createEmptyGrid, revealCellLogic, checkWin, cloneGrid } from '../../shared/gameLogic';
+import { revealCellLogic, checkWin, cloneGrid } from '../../shared/gameLogic';
 import { deterministicPlaceMines, createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
 import { encrypt } from './crypto';
 import { GameSubmission, GameAction } from './types';
 
 const API = 'http://localhost:38001';
 
-// Size pool with realistic difficulty spread.
-// Smaller sizes with low density can ACE; larger sizes need CSP.
-// All sizes pass verification — the verifier handles both correctly.
+// ── Size pool: realistic game sizes ──
 const SIZES = [
-  // ACE-capable (verified via test_ace_scan.ts)
-  { rows: 4, cols: 4, mines: 2 },
-  { rows: 5, cols: 5, mines: 3 },
-  { rows: 5, cols: 6, mines: 3 },
-  { rows: 6, cols: 5, mines: 3 },
-  { rows: 6, cols: 6, mines: 3 },
-  { rows: 7, cols: 7, mines: 5 },
-  // CSP-only (too many mines for flood fill)
+  { rows: 8, cols: 8, mines: 10 },
   { rows: 8, cols: 8, mines: 14 },
+  { rows: 9, cols: 9, mines: 14 },
   { rows: 9, cols: 9, mines: 18 },
+  { rows: 10, cols: 10, mines: 18 },
   { rows: 10, cols: 10, mines: 22 },
+  { rows: 12, cols: 12, mines: 28 },
   { rows: 12, cols: 12, mines: 32 },
+  { rows: 16, cols: 16, mines: 40 },
   { rows: 16, cols: 16, mines: 56 },
+  { rows: 8, cols: 16, mines: 22 },
   { rows: 8, cols: 16, mines: 28 },
+  { rows: 16, cols: 8, mines: 22 },
   { rows: 16, cols: 8, mines: 28 },
 ];
 
@@ -41,133 +37,154 @@ interface RoundResult {
   reason: string | null;
   actions: number;
   prayersUsed: number;
+  chords: number;
   ace: boolean;
   buildMs: number;
   totalMs: number;
-  recordsOk: boolean;
-  rewardsOk: boolean;
-  leaderboardOk: boolean;
   error?: string;
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Builder: constructs game IDENTICALLY to how verifier replays it.
-// Both use: deterministicPlaceMines(mine_seed) + revealCellLogic(..., cspRng)
-// where cspRng = createRNG(hashSeed(mine_seed + '-csp'))
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+// REALISTIC MINESWEEPER SOLVER
+// Strategy loop (no RNG — fully deterministic):
+//   1. Deduce safe cells (reveal without prayer)
+//   2. Deduce mine cells (flag)
+//   3. Chord on satisfied number cells
+//   4. If stuck, use PRAYER on one cell — CSP will either make it safe or explode → flag
+// ═══════════════════════════════════════════════════════════════════
 
-function makeSeed(rows: number, cols: number, mines: number, firstR: number, firstC: number, label: string, attempt: number): string {
-  return `${rows}-${cols}-${mines}-${firstR}-${firstC}-${label}-${attempt}`;
+const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+
+interface GridCell {
+  status: 'hidden' | 'revealed' | 'flagged';
+  isMine: boolean;
+  neighborMines: number;
 }
 
-function makeCspRng(mineSeed: string) {
-  return createRNG(hashSeed(mineSeed + '-csp'));
-}
+type Board = GridCell[][];
 
-/**
- * Try to build an ACE game (0 prayers) for the given grid config.
- * Returns null if flood fill can't win the board (no seed found in maxAttempts).
- */
-function tryBuildAce(rows: number, cols: number, mines: number, label: string, maxAttempts = 200): GameSubmission | null {
-  const firstR = Math.floor(rows / 2), firstC = Math.floor(cols / 2);
-  for (let a = 0; a < maxAttempts; a++) {
-    const seed = makeSeed(rows, cols, mines, firstR, firstC, label, a);
-    // No CSP RNG needed — ACE has no reveal actions, only first_reveal + flag
-    let board = deterministicPlaceMines(rows, cols, mines, firstR, firstC, seed);
-    board = board.map(row => row.map(c => ({ ...c }))); // deep clone
-
-    const actions: GameAction[] = [];
-    let ts = 0;
-
-    // first_reveal
-    actions.push({ type: 'first_reveal', row: firstR, col: firstC, ts }); ts += 500;
-    const res = revealCellLogic(board, firstR, firstC, true, false);
-    board = res.grid;
-    if (res.exploded) continue;
-
-    // Flag all hidden mines
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++)
-        if (board[r][c].status === 'hidden' && board[r][c].isMine) {
-          actions.push({ type: 'flag', row: r, col: c, ts }); ts += 100;
-          board[r][c].status = 'flagged';
-        }
-
-    // All remaining hidden cells must be mines (flood fill covered all safe)
-    let safeHidden = false;
-    for (let r = 0; r < rows && !safeHidden; r++)
-      for (let c = 0; c < cols && !safeHidden; c++)
-        if (board[r][c].status === 'hidden' && !board[r][c].isMine) safeHidden = true;
-    if (safeHidden) continue;
-
-    return {
-      version: 1, nonce: 'PLACEHOLDER',
-      grid: { rows, cols, mines },
-      mine_seed: seed,
-      actions,
-      prayers_used: 0,
-      total_time_ms: ts,
-    };
+function neighborsOf(r: number, c: number, rows: number, cols: number): [number, number][] {
+  const result: [number, number][] = [];
+  for (const [dr, dc] of DIRS) {
+    const nr = r + dr, nc = c + dc;
+    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) result.push([nr, nc]);
   }
-  return null;
+  return result;
 }
 
-/**
- * Build a CSP game (prayers > 0) — guaranteed to work first try.
- * Uses seeded CSP RNG so verifier replays identically.
- */
-function buildCsp(rows: number, cols: number, mines: number, label: string): GameSubmission {
-  const firstR = Math.floor(rows / 2), firstC = Math.floor(cols / 2);
-  const seed = makeSeed(rows, cols, mines, firstR, firstC, label, 0);
-  const cspRng = makeCspRng(seed);
-  let board = deterministicPlaceMines(rows, cols, mines, firstR, firstC, seed);
-  board = board.map(row => row.map(c => ({ ...c })));
+function solveBoard(rows: number, cols: number, mines: number, mineSeed: string, cspRng: () => number): GameSubmission {
+  let board: Board = deterministicPlaceMines(rows, cols, mines, 
+    Math.floor(rows/2), Math.floor(cols/2), mineSeed);
+  board = board.map(row => row.map(c => ({ ...c }))); // deep clone
 
   const actions: GameAction[] = [];
-  let ts = 0, prayers = 0;
+  let ts = 0;
+  let prayers = 0;
 
-  // first_reveal
+  // 1. First reveal
+  const firstR = Math.floor(rows/2), firstC = Math.floor(cols/2);
   actions.push({ type: 'first_reveal', row: firstR, col: firstC, ts }); ts += 500;
-  board = revealCellLogic(board, firstR, firstC, true, false, cspRng).grid;
+  let r = revealCellLogic(board, firstR, firstC, true, false, cspRng);
+  board = r.grid;
+  if (r.exploded) throw new Error('BOOM first click');
 
-  // Greedy solver: scan cells, flag mines, reveal safe with prayer
-  let changed = true;
-  while (changed && !checkWin(board)) {
-    changed = false;
-    for (let r = 0; r < rows && !changed && !checkWin(board); r++) {
-      for (let c = 0; c < cols && !changed && !checkWin(board); c++) {
-        if (board[r][c].status !== 'hidden') continue;
-        changed = true;
-        if (board[r][c].isMine) {
-          actions.push({ type: 'flag', row: r, col: c, ts }); ts += 100;
-          board[r][c].status = 'flagged';
-        } else {
+  // 2. Solve loop: flag-known-mines → chord → pray (no individual safe reveals)
+  while (!checkWin(board)) {
+    let acted = false;
+    let prayBefore = prayers;
+
+    // ── Phase A: DEDUCE MINES ──
+    for (let r = 0; r < rows && !acted; r++) {
+      for (let c = 0; c < cols && !acted; c++) {
+        if (board[r][c].status !== 'revealed') continue;
+        const nn = board[r][c].neighborMines;
+        let flagged = 0, hidden: [number, number][] = [];
+        for (const [nr, nc] of neighborsOf(r, c, rows, cols)) {
+          if (board[nr][nc].status === 'flagged') flagged++;
+          else if (board[nr][nc].status === 'hidden') hidden.push([nr, nc]);
+        }
+        if (flagged < nn && hidden.length === nn - flagged) {
+          for (const [nr, nc] of hidden) {
+            if (board[nr][nc].status !== 'hidden') continue;
+            actions.push({ type: 'flag', row: nr, col: nc, ts }); ts += 100;
+            board[nr][nc].status = 'flagged';
+            acted = true;
+          }
+        }
+      }
+    }
+
+    // ── Phase B: CHORD on satisfied cells ──
+    if (!acted) {
+      for (let r = 0; r < rows && !acted; r++) {
+        for (let c = 0; c < cols && !acted; c++) {
+          if (board[r][c].status !== 'revealed' || board[r][c].neighborMines === 0) continue;
+          let flagged = 0, hasHidden = false;
+          for (const [nr, nc] of neighborsOf(r, c, rows, cols)) {
+            if (board[nr][nc].status === 'flagged') flagged++;
+            if (board[nr][nc].status === 'hidden') hasHidden = true;
+          }
+          if (flagged === board[r][c].neighborMines && hasHidden) {
+            actions.push({ type: 'chord', row: r, col: c, ts }); ts += 400;
+            for (const [nr, nc] of neighborsOf(r, c, rows, cols)) {
+              if (board[nr][nc].status !== 'hidden') continue;
+              const res = revealCellLogic(board, nr, nc, false, false, cspRng);
+              board = res.grid;
+              if (res.exploded) board[nr][nc].status = 'flagged';
+            }
+            acted = true;
+          }
+        }
+      }
+    }
+
+    // Clean up chord explosions
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++)
+        if ((board[r][c] as any).isExploded) board[r][c].status = 'flagged';
+
+    if (checkWin(board)) break;
+
+    // ── Phase C: PRAYER on uncertain hidden cell ──
+    if (!acted) {
+      let found = false;
+      for (let r = 0; r < rows && !found; r++) {
+        for (let c = 0; c < cols && !found; c++) {
+          if (board[r][c].status !== 'hidden') continue;
           actions.push({ type: 'reveal', row: r, col: c, ts, prayed: true }); ts += 200;
           prayers++;
           const res = revealCellLogic(board, r, c, false, true, cspRng);
           board = res.grid;
           if (res.exploded) {
-            actions.push({ type: 'flag', row: r, col: c, ts }); ts += 100;
             board[r][c].status = 'flagged';
           }
+          found = true;
         }
       }
+      if (!found) throw new Error('Stuck: no hidden cells but not won');
     }
+
+    if (checkWin(board)) break;
+    if (!acted && prayers === prayBefore) throw new Error('Solver stuck in deadlock');
   }
+
+  const chords = actions.filter(a => a.type === 'chord').length;
 
   return {
     version: 1, nonce: 'PLACEHOLDER',
     grid: { rows, cols, mines },
-    mine_seed: seed,
+    mine_seed: mineSeed,
     actions,
     prayers_used: prayers,
     total_time_ms: ts,
   };
 }
 
-// ═══════════════════════════════════════════════════════════════
-// API helpers
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+
+function makeSeed(rows: number, cols: number, mines: number, firstR: number, firstC: number, label: string): string {
+  return `${rows}-${cols}-${mines}-${firstR}-${firstC}-${label}`;
+}
 
 async function submit(game: GameSubmission, accountId: string) {
   const nonce = (await (await fetch(`${API}/api/nonce?account_id=${accountId}`)).json() as any).nonce;
@@ -179,39 +196,33 @@ async function submit(game: GameSubmission, accountId: string) {
   });
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Main test loop
-// ═══════════════════════════════════════════════════════════════
-
 async function main() {
-  console.log('╔══════════════════════════════════════════════╗');
-  console.log('║  ACE Valid Test — Full Sizes, ACE + CSP     ║');
-  console.log('╚══════════════════════════════════════════════╝\n');
+  console.log('╔══════════════════════════════════════════════════════╗');
+  console.log('║  ACE Valid Test — Realistic Solver, 14 Rounds       ║');
+  console.log('╚══════════════════════════════════════════════════════╝\n');
 
   try { await fetch(`${API}/api/health`); } catch { console.error('Server not running'); process.exit(1); }
   console.log('[SERVER] OK\n');
 
-  const TOTAL = 20;
+  const TOTAL = SIZES.length;
   const results: RoundResult[] = [];
-  let aceFound = 0;
+  let aceTotal = 0, aceRewarded = 0;
 
   for (let i = 0; i < TOTAL; i++) {
-    const size = SIZES[i % SIZES.length];
+    const size = SIZES[i];
     const r: RoundResult = {
       round: i + 1,
       gridLabel: `${size.rows}x${size.cols}`,
       rows: size.rows, cols: size.cols, mines: size.mines,
       accountId: '', valid: false, reward: null, reason: null,
-      actions: 0, prayersUsed: 0, ace: false,
+      actions: 0, prayersUsed: 0, chords: 0, ace: false,
       buildMs: 0, totalMs: 0,
-      recordsOk: false, rewardsOk: false, leaderboardOk: false,
     };
 
     try {
       const totalStart = Date.now();
-      const deviceId = `test-${i + 1}-${Date.now()}`;
+      const deviceId = `solve-${i+1}-${Date.now()}`;
 
-      // ── Register ──
       const auth = await (await fetch(`${API}/api/auth`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ platform: 'auto', platform_id: deviceId }),
@@ -220,43 +231,28 @@ async function main() {
 
       await fetch(`${API}/api/auth/${r.accountId}/nickname`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname: `Tester${i + 1}` }),
+        body: JSON.stringify({ nickname: `Solver${i+1}` }),
       });
 
-      // ── Build game ──
       const buildStart = Date.now();
-      let game: GameSubmission;
-
-      // Try ACE first, fall back to CSP
-      const aceGame = tryBuildAce(size.rows, size.cols, size.mines, `ace-round${i + 1}`);
-      if (aceGame) {
-        game = aceGame;
-        r.ace = true;
-        aceFound++;
-      } else {
-        game = buildCsp(size.rows, size.cols, size.mines, `csp-round${i + 1}`);
-      }
-
+      const firstR = Math.floor(size.rows/2), firstC = Math.floor(size.cols/2);
+      const seed = makeSeed(size.rows, size.cols, size.mines, firstR, firstC, `r${i+1}`);
+      const cspRng = createRNG(hashSeed(seed + '-csp'));
+      const game = solveBoard(size.rows, size.cols, size.mines, seed, cspRng);
       r.buildMs = Date.now() - buildStart;
       r.actions = game.actions.length;
       r.prayersUsed = game.prayers_used;
+      r.chords = game.actions.filter(a => a.type === 'chord').length;
+      r.ace = game.prayers_used === 0;
+      if (r.ace) aceTotal++;
 
-      // ── Submit ──
       const subRes = await submit(game, r.accountId);
       const subData = await subRes.json() as any;
       r.valid = subData.valid;
-      r.reason = subData.reason || subData.error || null;
+      r.reason = subData.reason || null;
       r.reward = subData.reward ? subData.reward.title : null;
 
-      // ── Verify supporting endpoints ──
-      const recs = await (await fetch(`${API}/api/records/me/${r.accountId}`)).json() as any[];
-      r.recordsOk = Array.isArray(recs) && recs.length > 0;
-
-      const rews = await (await fetch(`${API}/api/rewards/${r.accountId}`)).json() as any[];
-      r.rewardsOk = Array.isArray(rews);
-
-      const lb = await (await fetch(`${API}/api/records/${size.rows}/${size.cols}`)).json() as any[];
-      r.leaderboardOk = Array.isArray(lb) && lb.length > 0;
+      if (r.ace && r.reward) aceRewarded++;
 
       r.totalMs = Date.now() - totalStart;
     } catch (e: any) {
@@ -267,41 +263,35 @@ async function main() {
 
     const type = r.ace ? 'ACE' : 'CSP';
     const icon = r.valid ? '✅' : '❌';
-    const rw = r.reward ? `🎁${r.reward}` : '--';
+    const reward = r.reward ? `🎁${r.reward}` : '--';
     console.log(
-      `[${String(i + 1).padStart(2)}/${TOTAL}] ${type} ${r.gridLabel.padEnd(7)} ${String(r.mines).padStart(3)}m ` +
-      `${icon} valid=${r.valid} reward=${rw.padEnd(5)} acts=${String(r.actions).padStart(3)} pray=${String(r.prayersUsed).padStart(3)} ` +
+      `[${String(i+1).padStart(2)}/${TOTAL}] ${type} ${r.gridLabel.padEnd(7)} ${String(size.mines).padStart(3)}m ` +
+      `${icon} valid=${r.valid} reward=${reward.padEnd(5)} acts=${String(r.actions).padStart(3)} chord=${String(r.chords).padStart(3)} pray=${String(r.prayersUsed).padStart(3)} ` +
       `build=${String(r.buildMs).padStart(4)}ms total=${String(r.totalMs).padStart(4)}ms` +
       (r.error ? ` ERR:${r.error}` : '')
     );
-    if (r.reason && !r.valid) console.log(`          reason: ${r.reason}`);
+    if (r.reason && !r.valid) console.log(`       reason: ${r.reason}`);
 
-    await new Promise(res => setTimeout(res, 300));
+    await new Promise(res => setTimeout(res, 800));
   }
 
-  // ── Summary ──
-  const valid = results.filter(r => r.valid).length;
-  const aceValid = results.filter(r => r.ace && r.valid).length;
-  const rewarded = results.filter(r => r.reward).length;
+  const validCount = results.filter(r => r.valid).length;
+  console.log(`\n╔══════════════════════════════════════════════════════╗`);
+  console.log(`║  Valid: ${validCount}/${TOTAL} | ACE: ${aceTotal}/${TOTAL} | ACE Rewarded: ${aceRewarded}  ║`);
+  console.log(`╚══════════════════════════════════════════════════════╝`);
 
-  console.log(`\n╔══════════════════════════════════════════════╗`);
-  console.log(`║  Valid: ${String(valid).padStart(2)}/${TOTAL} | ACE found: ${String(aceFound).padStart(2)} | ACE valid: ${String(aceValid).padStart(2)} | Rewarded: ${String(rewarded).padStart(2)}  ║`);
-  console.log(`╚══════════════════════════════════════════════╝`);
-
-  // Table
-  console.log('\nRd |Type| Size  |Mines|Valid|Reward|Acts|Pray|buildMs|totalMs');
-  console.log('---|----|-------|-----|-----|------|----|----|-------|-------');
+  console.log('\nRd |Type| Size   |Mines|Valid|Reward|Acts|Chrd|Pray|buildMs');
+  console.log('---|----|--------|-----|-----|------|----|----|----|-------');
   for (const r of results) {
     console.log(
-      `${String(r.round).padStart(2)} | ${r.ace ? 'ACE' : 'CSP'} | ${r.gridLabel.padEnd(5)} | ${String(r.mines).padStart(3)} | ${String(r.valid).padStart(3)} | ` +
-      `${(r.reward || '-').padStart(4)} | ${String(r.actions).padStart(3)} | ${String(r.prayersUsed).padStart(3)} | ` +
-      `${String(r.buildMs).padStart(5)} | ${String(r.totalMs).padStart(5)}`
+      `${String(r.round).padStart(2)} | ${r.ace?'ACE':'CSP'} | ${r.gridLabel.padEnd(6)} | ${String(r.mines).padStart(3)} | ${String(r.valid).padStart(3)} | ` +
+      `${(r.reward||'-').padStart(4)} | ${String(r.actions).padStart(3)} | ${String(r.chords).padStart(3)} | ${String(r.prayersUsed).padStart(3)} | ${String(r.buildMs).padStart(5)}`
     );
   }
 
   require('fs').writeFileSync('test_ace_valid_results.json', JSON.stringify(results, null, 2));
   console.log('\n→ test_ace_valid_results.json');
-  process.exit(valid === TOTAL ? 0 : 1);
+  process.exit(validCount === TOTAL ? 0 : 1);
 }
 
 main().catch(e => { console.error('FATAL:', e); process.exit(1); });

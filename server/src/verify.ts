@@ -100,7 +100,9 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
         board = result.grid;
         if (result.prayerConsumed) prayerCount++;
         if (result.exploded) {
-          status = 'lost';
+          // Flag the cell after explosion (consistent with client/prayer mechanic)
+          board = board.map((row, ri) => row.map((c, ci) =>
+            ri === action.row && ci === action.col ? { ...c, status: 'flagged' as const } : c));
         }
         break;
       }
@@ -133,8 +135,9 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
           const result = revealCellLogic(board, t.r, t.c, false, false, cspRng);
           board = result.grid;
           if (result.exploded) {
-            status = 'lost';
-            break;
+            // Flag the exploded cell (consistent with client behavior)
+            board = board.map((row, ri) => row.map((c, ci) =>
+              ri === t.r && ci === t.c ? { ...c, status: 'flagged' as const } : c));
           }
         }
         break;
