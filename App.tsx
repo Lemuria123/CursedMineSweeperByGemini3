@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CursedReward, CellStatus } from './types';
 import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
+import { createRNG, hashSeed } from './shared/deterministicPlaceMines';
 import { hasRewardForDifficulty, saveReward } from './utils/storage';
 import { fetchCursedReward } from './utils/cursedContent';
 import { Board } from './components/Board';
@@ -19,11 +20,10 @@ import { encrypt } from './utils/encrypt';
 // Easy: 9x9 (81) -> ~21 mines
 // Medium: 16x16 (256) -> ~58 mines
 // Hard: 16x30 (480) -> ~105 mines
-// ACE reward requires prayers=0, so default to recommended-1 for fair play
 const DIFFICULTIES: Difficulty[] = [
-  { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) - 1 },
-  { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) - 1 },
-  { name: 'Hard', rows: 25, cols: 16, mines: calculateRecommendedMines(25, 16) - 1 },
+  { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) },
+  { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) },
+  { name: 'Hard', rows: 25, cols: 16, mines: calculateRecommendedMines(25, 16) },
 ];
 
 const DRAG_THRESHOLD = 5;
@@ -72,7 +72,7 @@ const App: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDownRef = useRef(false);
   const isDraggingRef = useRef(false);
-  const rightClickCellRef = useRef<{row: number, col: number} | null>(null);
+  const cspRngRef = useRef<(() => number) | null>(null); // seeded CSP RNG, matches backend
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // Center the board logic
@@ -148,11 +148,14 @@ const App: React.FC = () => {
     const cell = newGrid[row][col];
     if (cell.status === 'flagged') return;
 
-    // First Click: Generate Mines
+    // First Click: Generate Mines (seeded RNG = same layout as backend)
     if (gameState.status === 'idle') {
-      newGrid = placeMines(newGrid, gameState.difficulty.mines, row, col);
+      const seedSuffix = String(Date.now());
+      const mineSeed = `${gameState.difficulty.rows}-${gameState.difficulty.cols}-${gameState.difficulty.mines}-${row}-${col}-${seedSuffix}`;
+      cspRngRef.current = createRNG(hashSeed(mineSeed + '-csp'));
+      newGrid = placeMines(newGrid, gameState.difficulty.mines, row, col, createRNG(hashSeed(mineSeed)));
       newStatus = 'playing';
-      recorderRef.current.start(row, col);
+      recorderRef.current.start(row, col, seedSuffix);
     }
 
     // Capture prayer state before logic runs to determine if it was a failure
@@ -166,9 +169,10 @@ const App: React.FC = () => {
         
         if (targets.length > 0) {
             actionTaken = true;
-            recorderRef.current.record('chord', row, col);
+            // Record chord with prayer state so backend can replicate CSP
+            recorderRef.current.record('chord', row, col, newIsPraying);
             for (const target of targets) {
-                const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying);
+                const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying, cspRngRef.current!);
                 newGrid = result.grid; 
                 if (result.prayerConsumed) newPrayersUsed++;
                 if (result.exploded) {
@@ -203,8 +207,12 @@ const App: React.FC = () => {
     } else {
         // --- STANDARD REVEAL LOGIC ---
         actionTaken = true;
-        recorderRef.current.record('reveal', row, col, newIsPraying);
-        const result = revealCellLogic(newGrid, row, col, gameState.status === 'idle', newIsPraying);
+        // first_reveal is already recorded by recorderRef.current.start(),
+        // do not record a second reveal for the same cell
+        if (gameState.status !== 'idle') {
+          recorderRef.current.record('reveal', row, col, newIsPraying);
+        }
+        const result = revealCellLogic(newGrid, row, col, gameState.status === 'idle', newIsPraying, cspRngRef.current!);
         newGrid = result.grid;
         if (result.prayerConsumed) newPrayersUsed++;
         if (result.exploded) {
@@ -229,44 +237,30 @@ const App: React.FC = () => {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
-      // REWARD LOGIC
-      if (newPrayersUsed === 0) {
-          const minMinesRequired = calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols);
-          
-          if (gameState.difficulty.mines >= minMinesRequired) {
-            if (!hasRewardForDifficulty(gameState.difficulty)) {
-                fetchCursedReward(gameState.difficulty).then(async (reward) => {
-                    saveReward(reward);
-                    setNewUnlockedReward(reward);
-                    setPendingAceReward(reward);
+      // Always submit record to server (all wins, ACE or not)
+      register('auto', getAccountId()).then(() =>
+        submitToServer(null, newPrayersUsed)
+      ).catch(() => {});
 
-                    // Submit to server
-                    const accountId = getAccountId();
-                    try {
-                      // Register account if not done yet
-                      await register('auto', accountId);
-
-                      // Check if nickname is set
-                      const info = await getAccount(accountId);
-                      if (!info.nickname) {
-                        setShowNicknamePrompt(true);
-                      } else {
-                        await submitToServer(reward, newPrayersUsed);
-                      }
-                    } catch {
-                      // Offline — reward saved locally, will sync later
-                    }
-                });
-            } else {
-                // Already has reward — still submit record
-                register('auto', getAccountId()).then(() =>
-                  submitToServer(null, newPrayersUsed)
-                ).catch(() => {});
-            }
-          }
+      // ACE reward: triggered when mines >= recommended (always true for default difficulties)
+      if (newPrayersUsed === 0 && gameState.difficulty.mines >= calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols) && !hasRewardForDifficulty(gameState.difficulty)) {
+          fetchCursedReward(gameState.difficulty).then(async (reward) => {
+              saveReward(reward);
+              setNewUnlockedReward(reward);
+              setPendingAceReward(reward);
+              // Check nickname for ACE leaderboard (account already registered by submit above)
+              try {
+                const accountId = getAccountId();
+                const info = await getAccount(accountId);
+                if (!info.nickname) {
+                  setShowNicknamePrompt(true);
+                }
+              } catch { /* offline — will retry later */ }
+          });
       }
     }
 
+    // Always update game state regardless of win/loss
     setGameState(prev => ({
       ...prev,
       grid: newGrid,
@@ -285,7 +279,6 @@ const App: React.FC = () => {
     const cell = gameState.grid[row][col];
     if (cell.status === 'revealed') return;
 
-    rightClickCellRef.current = { row, col };
     const newStatus: CellStatus = cell.status === 'flagged' ? 'hidden' : 'flagged';
     const flagsChange = newStatus === 'flagged' ? 1 : -1;
 
@@ -320,7 +313,6 @@ const App: React.FC = () => {
 
   const handlePointerUp = useCallback(() => {
     isDownRef.current = false;
-    rightClickCellRef.current = null;
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
     window.removeEventListener('pointercancel', handlePointerUp);
@@ -329,7 +321,7 @@ const App: React.FC = () => {
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!scrollContainerRef.current) return;
     isDownRef.current = true;
-    isDraggingRef.current = false; 
+    isDraggingRef.current = false;
     startPosRef.current = {
       x: e.clientX,
       y: e.clientY,
@@ -339,23 +331,6 @@ const App: React.FC = () => {
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerUp);
-  };
-
-  const handleClickCapture = (e: React.MouseEvent) => {
-    if (isDraggingRef.current) {
-      // For contextmenu (right-click), allow if still on the same cell
-      if (e.type === 'contextmenu') {
-        const cellEl = (e.target as HTMLElement).closest('[data-cell]');
-        if (cellEl) {
-          const r = parseInt(cellEl.getAttribute('data-row') || '-1');
-          const c = parseInt(cellEl.getAttribute('data-col') || '-1');
-          const start = rightClickCellRef.current;
-          if (start && r === start.row && c === start.col) return; // same cell, allow
-        }
-      }
-      e.stopPropagation();
-      e.preventDefault();
-    }
   };
 
   // ── Server submission helper ──
@@ -382,11 +357,8 @@ const App: React.FC = () => {
       setAccountNickname(trimmed);
       setShowNicknamePrompt(false);
       setNicknameLocal('');
-      if (pendingAceReward) {
-        await submitToServer(pendingAceReward, 0);
-      }
+      // Record already submitted by the win callback — no duplicate submit needed
     } catch {
-      // Offline — skip
       setShowNicknamePrompt(false);
     }
   };
@@ -455,8 +427,6 @@ const App: React.FC = () => {
         ref={scrollContainerRef}
         className="flex-1 overflow-auto custom-scrollbar cursor-grab active:cursor-grabbing relative z-10 w-full"
         onPointerDown={handlePointerDown}
-        onClickCapture={handleClickCapture} 
-        onContextMenuCapture={handleClickCapture} 
       >
           <div className="min-w-fit min-h-fit p-8 lg:p-12 m-auto w-fit h-fit block">
             <Board 

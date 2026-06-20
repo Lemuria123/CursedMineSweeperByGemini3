@@ -72,16 +72,20 @@ const dbReady = initDb().then((database) => {
   `);
 
   // Migration: add prayers_used column if missing (v0.2.2)
-  try {
-    const cols = db.exec("PRAGMA table_info(records)");
+  try { migrateAddColumn('records', 'prayers_used', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
+  // Migration: add verify_reason column if missing (v0.2.3)
+  try { migrateAddColumn('records', 'verify_reason', "TEXT DEFAULT NULL"); } catch {}
+
+  function migrateAddColumn(table: string, col: string, def: string) {
+    const cols = db.exec(`PRAGMA table_info(${table})`);
     if (cols.length > 0) {
       const names = cols[0].values.map((v: any[]) => v[1]);
-      if (!names.includes('prayers_used')) {
-        db.run('ALTER TABLE records ADD COLUMN prayers_used INTEGER NOT NULL DEFAULT -1');
-        console.log('[db] added prayers_used column to records');
+      if (!names.includes(col)) {
+        db.run(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+        console.log(`[db] added ${col} column to ${table}`);
       }
     }
-  } catch (e: any) { /* table may not exist yet */ }
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS records (

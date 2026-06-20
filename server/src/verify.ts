@@ -100,9 +100,7 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
         board = result.grid;
         if (result.prayerConsumed) prayerCount++;
         if (result.exploded) {
-          // Flag the cell after explosion (consistent with client/prayer mechanic)
-          board = board.map((row, ri) => row.map((c, ci) =>
-            ri === action.row && ci === action.col ? { ...c, status: 'flagged' as const } : c));
+          status = 'lost';
         }
         break;
       }
@@ -131,13 +129,13 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
 
       case 'chord': {
         const targets = getChordTargets(board, action.row, action.col);
+        const isPraying = action.prayed === true;
         for (const t of targets) {
-          const result = revealCellLogic(board, t.r, t.c, false, false, cspRng);
+          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng);
           board = result.grid;
           if (result.exploded) {
-            // Flag the exploded cell (consistent with client behavior)
-            board = board.map((row, ri) => row.map((c, ci) =>
-              ri === t.r && ci === t.c ? { ...c, status: 'flagged' as const } : c));
+            status = 'lost';
+            break;
           }
         }
         break;

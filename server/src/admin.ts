@@ -41,6 +41,7 @@ const top = (title: string) => `<!DOCTYPE html>
     <a href="/records" class="text-gray-400 hover:text-white">Records</a>
     <a href="/rewards" class="text-gray-400 hover:text-white">Rewards</a>
     <a href="/submissions" class="text-gray-400 hover:text-white">Submissions</a>
+    <a href="/maintenance" class="text-gray-400 hover:text-white">Maintenance</a>
     <a href="/logout" class="text-red-400 hover:text-white">Logout</a>
   </div>
 </nav>
@@ -310,7 +311,7 @@ app.get('/submissions', requireAdmin, (req, res) => {
       <td class="py-3 px-4 text-xs font-mono">${s.rows}x${s.cols}</td>
       <td class="py-3 px-4 text-xs">${s.mines}</td>
       <td class="py-3 px-4 text-xs font-mono text-amber-400">${s.time_ms}ms</td>
-      <td class="py-3 px-4 text-xs">${s.validated ? '<span class="text-green-400 font-bold">✓ Pass</span>' : '<span class="text-red-400 font-bold">✗ Fail</span>'}</td>
+      <td class="py-3 px-4 text-xs">${s.validated ? '<span class="text-green-400 font-bold">✓ Pass</span>' : `<span class="text-red-400 font-bold">✗ Fail</span>${s.verify_reason ? `<br><span class="text-red-500/70 text-[10px]">${esc(s.verify_reason)}</span>` : ''}`}</td>
       <td class="py-3 px-4 text-xs text-gray-500">${fmtDate(s.submitted_at)}</td>
       <td class="py-3 px-4"><a href="/replay/${s.id}" class="text-purple-400 hover:underline text-xs">Replay</a></td>
     </tr>`).join('');
@@ -393,8 +394,9 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
       }
       case 'chord': {
         const targets = getChordTargets(board, action.row, action.col);
+        const isPraying = action.prayed === true;
         for (const t of targets) {
-          const result = revealCellLogic(board, t.r, t.c, false, false, cspRng);
+          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng);
           board = result.grid;
           if (result.exploded) { status = 'lost'; break; }
         }
@@ -472,6 +474,7 @@ app.get('/replay/:id', requireAdmin, (req, res) => {
     <a href="/dashboard" class="text-gray-400 hover:text-white">Dashboard</a>
     <a href="/records" class="text-gray-400 hover:text-white">Records</a>
     <a href="/submissions" class="text-gray-400 hover:text-white">Submissions</a>
+    <a href="/maintenance" class="text-gray-400 hover:text-white">Maintenance</a>
     <a href="/logout" class="text-red-400 hover:text-white">Logout</a>
   </div>
 </nav>
@@ -519,7 +522,7 @@ async function load() {
       j.grid.rows + 'x' + j.grid.cols + ' / ' + j.grid.mines + ' mines &nbsp;|&nbsp;' +
       'Prayers: ' + j.prayers_used + ' (replayed: ' + j.prayers_replayed + ') &nbsp;|&nbsp;' +
       'Status: <span class="' + (j.status === 'won' ? 'text-green-400' : 'text-red-400') + '">' + j.status.toUpperCase() + '</span> &nbsp;|&nbsp;' +
-      new Date(j.submitted_at).toISOString().replace('T',' ').slice(0,19);
+      fmtDate(j.submitted_at);
     renderActionList();
     setStep(-1); // show initial
   } catch(e) { document.getElementById('info').innerHTML = '<span class="text-red-400">Error: ' + e.message + '</span>'; }
@@ -630,12 +633,131 @@ load();
 </html>`);
 });
 
+// ── Maintenance: Delete Test Data ──
+
+// 检测账号是否为测试账号：
+//   1. nickname 以 "Tester" 开头（所有测试脚本统一使用）
+//   2. platform_id 不是标准 UUID 格式（36 字符，4 个连字符在固定位置）
+// 真实玩家使用 crypto.randomUUID()，始终是标准 UUID 格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+const IS_TEST_ACCOUNT_SQL = `(
+  COALESCE(a.nickname, '') LIKE 'Tester%'
+  OR a.platform_id NOT LIKE '________-____-____-____-____________'
+)`;
+
+app.get('/maintenance', requireAdmin, (_req, res) => {
+  const testAccountCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM accounts a WHERE ${IS_TEST_ACCOUNT_SQL}`)?.cnt || 0;
+  const testRecordCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM records r INNER JOIN accounts a ON r.account_id = a.id WHERE ${IS_TEST_ACCOUNT_SQL}`)?.cnt || 0;
+  const testRewardCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM rewards rw INNER JOIN accounts a ON rw.account_id = a.id WHERE ${IS_TEST_ACCOUNT_SQL}`)?.cnt || 0;
+  const testNonceCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM submission_nonces sn INNER JOIN accounts a ON sn.account_id = a.id WHERE ${IS_TEST_ACCOUNT_SQL}`)?.cnt || 0;
+
+  const realAccountCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM accounts a WHERE NOT (${IS_TEST_ACCOUNT_SQL})`)?.cnt || 0;
+  const realRecordCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM records r INNER JOIN accounts a ON r.account_id = a.id WHERE NOT (${IS_TEST_ACCOUNT_SQL})`)?.cnt || 0;
+  const realRewardCount = get<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM rewards rw INNER JOIN accounts a ON rw.account_id = a.id WHERE NOT (${IS_TEST_ACCOUNT_SQL})`)?.cnt || 0;
+
+  const sampleAccounts = all<{ id: string; nickname: string | null; platform_id: string }>(
+    `SELECT a.id, a.nickname, a.platform_id FROM accounts a WHERE ${IS_TEST_ACCOUNT_SQL} ORDER BY a.created_at DESC LIMIT 30`);
+
+  const accountPreviewRows = sampleAccounts.map(a => `
+    <tr class="border-b border-gray-700 text-xs">
+      <td class="py-1 px-2 font-mono text-gray-400">${a.id.slice(0, 12)}...</td>
+      <td class="py-1 px-2">${esc(a.nickname) || '<span class="text-gray-600">—</span>'}</td>
+      <td class="py-1 px-2 font-mono text-gray-500">${esc(a.platform_id.slice(0, 40))}</td>
+    </tr>`).join('');
+
+  res.send(page('Maintenance', `
+<h2 class="text-xl font-semibold mb-4">Maintenance — Delete Test Data</h2>
+
+<p class="text-sm text-gray-400 mb-4">
+  Test accounts are identified by non-UUID platform IDs (e.g. <code class="text-purple-400">comp-...</code>, <code class="text-purple-400">t-...</code>, <code class="text-purple-400">forge-...</code>)
+  or nicknames starting with <code class="text-purple-400">Tester</code>.
+  Real players use <code class="text-green-400">crypto.randomUUID()</code> which always produces standard UUID format.
+</p>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+  <div class="bg-gray-800 rounded-xl p-4">
+    <h3 class="text-sm font-semibold text-red-400 mb-3">🧪 Test Data (to be deleted)</h3>
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <div><span class="text-gray-400">Accounts:</span> <span class="text-red-400 font-bold">${testAccountCount}</span></div>
+      <div><span class="text-gray-400">Records:</span> <span class="text-red-400 font-bold">${testRecordCount}</span></div>
+      <div><span class="text-gray-400">Rewards:</span> <span class="text-red-400 font-bold">${testRewardCount}</span></div>
+      <div><span class="text-gray-400">Nonces:</span> <span class="text-red-400 font-bold">${testNonceCount}</span></div>
+    </div>
+  </div>
+  <div class="bg-gray-800 rounded-xl p-4">
+    <h3 class="text-sm font-semibold text-green-400 mb-3">✅ Real Players (will keep)</h3>
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <div><span class="text-gray-400">Accounts:</span> <span class="text-green-400 font-bold">${realAccountCount}</span></div>
+      <div><span class="text-gray-400">Records:</span> <span class="text-green-400 font-bold">${realRecordCount}</span></div>
+      <div><span class="text-gray-400">Rewards:</span> <span class="text-green-400 font-bold">${realRewardCount}</span></div>
+    </div>
+  </div>
+</div>
+
+${testAccountCount > 0 ? `
+<div class="bg-gray-800 rounded-xl p-4 mb-6">
+  <h3 class="text-sm font-semibold text-gray-300 mb-2">Test Account Preview (newest ${Math.min(sampleAccounts.length, 30)})</h3>
+  <div class="max-h-64 overflow-y-auto">
+    <table class="w-full"><thead><tr class="bg-gray-700 text-left text-xs text-gray-400">
+      <th class="py-1 px-2">Account ID</th><th class="py-1 px-2">Nickname</th><th class="py-1 px-2">Platform ID</th>
+    </tr></thead><tbody>${accountPreviewRows}</tbody></table>
+  </div>
+</div>
+
+<form method="POST" action="/maintenance/delete-test-data" onsubmit="return confirm('Are you sure you want to delete ALL test data?\\n\\nThis will permanently remove:\\n• ${testAccountCount} test accounts\\n• ${testRecordCount} test records\\n• ${testRewardCount} test rewards\\n• ${testNonceCount} nonces\\n\\nReal player data will NOT be affected.\\n\\nThis action CANNOT be undone.')">
+  <button type="submit" class="px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-lg transition text-lg">
+    🗑 Delete All Test Data
+  </button>
+</form>
+` : `
+<div class="bg-gray-800 rounded-xl p-6 text-center">
+  <p class="text-gray-400">No test data found. Database is clean!</p>
+</div>
+`}
+`));
+});
+
+app.post('/maintenance/delete-test-data', requireAdmin, (req, res) => {
+  const delRecords = run(
+    `DELETE FROM records WHERE account_id IN (SELECT a.id FROM accounts a WHERE ${IS_TEST_ACCOUNT_SQL})`);
+  const delRewards = run(
+    `DELETE FROM rewards WHERE account_id IN (SELECT a.id FROM accounts a WHERE ${IS_TEST_ACCOUNT_SQL})`);
+  const delNonces = run(
+    `DELETE FROM submission_nonces WHERE account_id IN (SELECT a.id FROM accounts a WHERE ${IS_TEST_ACCOUNT_SQL})`);
+  const delAccounts = run(
+    `DELETE FROM accounts AS a WHERE ${IS_TEST_ACCOUNT_SQL}`);
+
+  res.send(page('Maintenance — Done', `
+<h2 class="text-xl font-semibold mb-4">Test Data Deleted</h2>
+<div class="bg-gray-800 rounded-xl p-6 space-y-2 text-sm">
+  <p><span class="text-red-400 font-bold">🗑 ${delAccounts}</span> test accounts removed</p>
+  <p><span class="text-red-400 font-bold">🗑 ${delRecords}</span> test records removed</p>
+  <p><span class="text-red-400 font-bold">🗑 ${delRewards}</span> test rewards removed</p>
+  <p><span class="text-red-400 font-bold">🗑 ${delNonces}</span> test nonces removed</p>
+  <p class="text-green-400 mt-2">✅ Real player data was NOT affected.</p>
+</div>
+<div class="mt-4">
+  <a href="/dashboard" class="text-purple-400 hover:underline text-sm">← Back to Dashboard</a>
+</div>
+`));
+});
+
 // ── Helpers ──
 function esc(s: string | null | undefined): string {
   return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 function escAttr(s: string): string { return s.replace(/"/g, '&quot;'); }
-function fmtDate(ts: number): string { return new Date(ts).toISOString().slice(0, 19).replace('T', ' '); }
+function fmtDate(ts: number): string {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 // ── Start ──
 const PORT = process.env.ADMIN_PORT ? parseInt(process.env.ADMIN_PORT) : 38002;

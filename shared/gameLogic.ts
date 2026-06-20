@@ -13,7 +13,7 @@ export const DIRECTIONS = [
 export const calculateRecommendedMines = (rows: number, cols: number): number => {
   const total = rows * cols;
   const factor = 0.20 + (1 / Math.pow(total, 0.65));
-  return Math.floor(total * factor);
+  return Math.max(1, Math.floor(total * factor) - 1);
 };
 
 export const createEmptyGrid = (rows: number, cols: number): CellData[][] => {
@@ -141,7 +141,8 @@ export const placeMines = (
 
 // --- CSP Solver ---
 
-const rearrangeMines = (
+// Exported for ACE testing: allows external code to query CSP solvability
+export const rearrangeMines = (
   grid: CellData[][],
   targetRow: number,
   targetCol: number,

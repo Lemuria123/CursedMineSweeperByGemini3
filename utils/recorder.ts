@@ -25,19 +25,21 @@ export class GameRecorder {
   private startTime: number = 0;
   private firstClickRow: number = 0;
   private firstClickCol: number = 0;
+  private seedSuffix: string = '';
 
-  start(firstClickRow: number, firstClickCol: number) {
+  start(firstClickRow: number, firstClickCol: number, seedSuffix: string = '') {
     this.actions = [];
     this.startTime = Date.now();
     this.firstClickRow = firstClickRow;
     this.firstClickCol = firstClickCol;
+    this.seedSuffix = seedSuffix;
     this.record('first_reveal', firstClickRow, firstClickCol);
   }
 
   record(type: RecordedAction['type'], row: number, col: number, prayed?: boolean) {
     const ts = Date.now() - this.startTime;
     const action: RecordedAction = { type, row, col, ts };
-    if (type === 'reveal' && prayed !== undefined) {
+    if (prayed !== undefined && (type === 'reveal' || type === 'chord')) {
       action.prayed = prayed;
     }
     this.actions.push(action);
@@ -47,7 +49,7 @@ export class GameRecorder {
    * Build the full payload ready for encryption and submission.
    */
   buildPayload(nonce: string, rows: number, cols: number, mines: number, prayersUsed: number): GameDataPayload {
-    const mineSeed = `${rows}-${cols}-${mines}-${this.firstClickRow}-${this.firstClickCol}`;
+    const mineSeed = `${rows}-${cols}-${mines}-${this.firstClickRow}-${this.firstClickCol}${this.seedSuffix ? '-' + this.seedSuffix : ''}`;
     return {
       version: 1,
       nonce,

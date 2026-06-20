@@ -128,7 +128,7 @@ async function start() {
 
     // 5. Store record
     run(
-      'INSERT INTO records (account_id, rows, cols, mines, time_ms, game_data, validated, submitted_at, prayers_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO records (account_id, rows, cols, mines, time_ms, game_data, validated, submitted_at, prayers_used, verify_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         account_id,
         submission.grid.rows,
@@ -139,6 +139,7 @@ async function start() {
         result.valid ? 1 : 0,
         now,
         submission.prayers_used,
+        result.reason || null,
       ],
     );
 
