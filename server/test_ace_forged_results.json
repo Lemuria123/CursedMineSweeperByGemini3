@@ -1,0 +1,135 @@
+[
+  {
+    "round": 1,
+    "attackType": "tampered_mine_seed",
+    "gridLabel": "8x8",
+    "accountId": "a6f496a1-5d5b-49d2-a602-8380f58f6d0a",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 8-8-10-4-4-, got 8-8-10-0-0-evil",
+    "reward": null,
+    "passed": true,
+    "timeMs": 26
+  },
+  {
+    "round": 2,
+    "attackType": "fake_zero_prayers",
+    "gridLabel": "8x8",
+    "accountId": "7f3b4cf7-0abe-4313-9cfa-a730bea41c81",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 8-8-14-4-4-, got 8-8-14-4-4",
+    "reward": null,
+    "passed": true,
+    "timeMs": 13
+  },
+  {
+    "round": 3,
+    "attackType": "replay_attack",
+    "gridLabel": "9x9",
+    "accountId": "717783f4-0c59-4108-b075-e625108ece90",
+    "valid": false,
+    "reason": "invalid or already used nonce",
+    "reward": null,
+    "passed": true,
+    "timeMs": 49
+  },
+  {
+    "round": 4,
+    "attackType": "missing_first",
+    "gridLabel": "10x10",
+    "accountId": "91b06916-df96-404d-a3e5-c81a02695f39",
+    "valid": false,
+    "reason": "first action must be first_reveal",
+    "reward": null,
+    "passed": true,
+    "timeMs": 22
+  },
+  {
+    "round": 5,
+    "attackType": "out_of_bounds",
+    "gridLabel": "12x12",
+    "accountId": "c1226a4d-7450-4c5e-908b-d1eb15086d03",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 12-12-28-6-6-, got 12-12-28-6-6",
+    "reward": null,
+    "passed": true,
+    "timeMs": 46
+  },
+  {
+    "round": 6,
+    "attackType": "tampered_dimensions",
+    "gridLabel": "16x16",
+    "accountId": "39f77e26-38c5-4709-9b78-f3d4287c74ab",
+    "valid": false,
+    "reason": null,
+    "reward": null,
+    "passed": false,
+    "timeMs": 0,
+    "error": "fetch failed"
+  },
+  {
+    "round": 7,
+    "attackType": "empty_actions",
+    "gridLabel": "8x16",
+    "accountId": "1fafd273-86f8-4f31-b784-dc605ae35759",
+    "valid": false,
+    "reason": "no actions provided",
+    "reward": null,
+    "passed": true,
+    "timeMs": 31
+  },
+  {
+    "round": 8,
+    "attackType": "wrong_first",
+    "gridLabel": "16x8",
+    "accountId": "bb2c5935-1786-479d-a6ac-425876441c10",
+    "valid": false,
+    "reason": "first action must be first_reveal",
+    "reward": null,
+    "passed": true,
+    "timeMs": 399
+  },
+  {
+    "round": 9,
+    "attackType": "impossible_time",
+    "gridLabel": "10x10",
+    "accountId": "40b92da0-9370-461e-8070-7b95007d489d",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 10-10-22-5-5-, got 10-10-22-5-5",
+    "reward": null,
+    "passed": true,
+    "timeMs": 57
+  },
+  {
+    "round": 10,
+    "attackType": "duplicate_action",
+    "gridLabel": "12x12",
+    "accountId": "110f7413-2fca-43f5-ade2-a9c36460a93b",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 12-12-32-6-6-, got 12-12-32-6-6",
+    "reward": null,
+    "passed": true,
+    "timeMs": 1381
+  },
+  {
+    "round": 11,
+    "attackType": "bad_nonce",
+    "gridLabel": "16x16",
+    "accountId": "46c0923c-a8e6-492d-aedc-59917846c547",
+    "valid": false,
+    "reason": "invalid or already used nonce",
+    "reward": null,
+    "passed": true,
+    "timeMs": 97
+  },
+  {
+    "round": 12,
+    "attackType": "tampered_time_ms",
+    "gridLabel": "9x9",
+    "accountId": "974194a5-c76a-4358-823b-651335ecd7fd",
+    "valid": false,
+    "reason": "mine_seed prefix mismatch: expected 9-9-18-4-4-, got 9-9-18-4-4",
+    "reward": null,
+    "passed": true,
+    "timeMs": 156
+  }
+]

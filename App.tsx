@@ -19,10 +19,11 @@ import { encrypt } from './utils/encrypt';
 // Easy: 9x9 (81) -> ~21 mines
 // Medium: 16x16 (256) -> ~58 mines
 // Hard: 16x30 (480) -> ~105 mines
+// ACE reward requires prayers=0, so default to recommended-1 for fair play
 const DIFFICULTIES: Difficulty[] = [
-  { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) },
-  { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) }, 
-  { name: 'Hard', rows: 25, cols: 16, mines: calculateRecommendedMines(25, 16) },
+  { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) - 1 },
+  { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) - 1 },
+  { name: 'Hard', rows: 25, cols: 16, mines: calculateRecommendedMines(25, 16) - 1 },
 ];
 
 const DRAG_THRESHOLD = 5;
@@ -71,6 +72,7 @@ const App: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDownRef = useRef(false);
   const isDraggingRef = useRef(false);
+  const rightClickCellRef = useRef<{row: number, col: number} | null>(null);
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // Center the board logic
@@ -283,6 +285,7 @@ const App: React.FC = () => {
     const cell = gameState.grid[row][col];
     if (cell.status === 'revealed') return;
 
+    rightClickCellRef.current = { row, col };
     const newStatus: CellStatus = cell.status === 'flagged' ? 'hidden' : 'flagged';
     const flagsChange = newStatus === 'flagged' ? 1 : -1;
 
@@ -317,6 +320,7 @@ const App: React.FC = () => {
 
   const handlePointerUp = useCallback(() => {
     isDownRef.current = false;
+    rightClickCellRef.current = null;
     window.removeEventListener('pointermove', handlePointerMove);
     window.removeEventListener('pointerup', handlePointerUp);
     window.removeEventListener('pointercancel', handlePointerUp);
@@ -339,6 +343,16 @@ const App: React.FC = () => {
 
   const handleClickCapture = (e: React.MouseEvent) => {
     if (isDraggingRef.current) {
+      // For contextmenu (right-click), allow if still on the same cell
+      if (e.type === 'contextmenu') {
+        const cellEl = (e.target as HTMLElement).closest('[data-cell]');
+        if (cellEl) {
+          const r = parseInt(cellEl.getAttribute('data-row') || '-1');
+          const c = parseInt(cellEl.getAttribute('data-col') || '-1');
+          const start = rightClickCellRef.current;
+          if (start && r === start.row && c === start.col) return; // same cell, allow
+        }
+      }
       e.stopPropagation();
       e.preventDefault();
     }

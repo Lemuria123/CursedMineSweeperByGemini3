@@ -41,10 +41,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen, currentDifficulty]);
 
-  // Real-time calculation of default mines when dimensions change
+  // Real-time calculation of default mines when dimensions change (recommended - 1 for ACE fairness)
   useEffect(() => {
-      // We set the mines to the recommended amount for the new size
-      setMines(calculateRecommendedMines(rows, cols));
+      setMines(Math.max(1, calculateRecommendedMines(rows, cols) - 1));
   }, [rows, cols]);
 
   const handleApply = () => {
@@ -195,7 +194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <label className="flex items-center gap-2 text-slate-400 text-xs uppercase font-bold">
                         <Bomb size={14} /> Curse Density
                     </label>
-                    <span className={`text-xs font-mono font-bold ${mines >= recommended ? 'text-red-400' : 'text-emerald-400'}`}>
+                    <span className={`text-xs font-mono font-bold ${mines >= recommended - 1 ? 'text-red-400' : 'text-emerald-400'}`}>
                         {mines} Mines ({Math.round((mines / (rows * cols)) * 100)}%)
                     </span>
                  </div>

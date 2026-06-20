@@ -103,6 +103,9 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
 
   return (
     <div
+      data-cell
+      data-row={row}
+      data-col={col}
       className={`
         relative w-full h-full 
         ${zIndexClass} 
