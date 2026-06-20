@@ -117,7 +117,13 @@ async function start() {
     run('DELETE FROM submission_nonces WHERE id = ?', [nonceRow.id]);
 
     // 4. Verify game data
-    const result = verifySubmission(submission);
+    let result: { valid: boolean; reason?: string };
+    try {
+      result = verifySubmission(submission);
+    } catch (e: any) {
+      console.error('[verify] exception:', e.message);
+      result = { valid: false, reason: `verification error: ${e.message}` };
+    }
     const now = Date.now();
 
     // 5. Store record
@@ -154,7 +160,7 @@ async function start() {
           hue: 0,
         };
         run(
-          'INSERT INTO rewards (id, account_id, difficulty_name, rows, cols, mines, title, content, type, hue, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT OR IGNORE INTO rewards (id, account_id, difficulty_name, rows, cols, mines, title, content, type, hue, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [
             reward.id, account_id, reward.difficulty_name, reward.rows, reward.cols, reward.mines,
             reward.title, reward.content, reward.type, reward.hue, now,

@@ -209,7 +209,7 @@ const rearrangeMines = (
 
   addToFrontier(targetRow, targetCol);
 
-  const MAX_FRONTIER_SIZE = 50;
+  const MAX_FRONTIER_SIZE = 150;
   let head = 0;
   while (head < processingQueue.length && frontierList.length < MAX_FRONTIER_SIZE) {
     const curr = processingQueue[head++];
@@ -327,27 +327,134 @@ const rearrangeMines = (
     return true;
   };
 
+  // ── Constraint propagation: eliminate forced cells before recursive search ──
+  const forced = new Set<number>(); // indices of cells with determined values
+  const frontierToConstraint = new Map<number, number[]>();
+  for (let ci = 0; ci < allConstraints.length; ci++) {
+    const cc = allConstraints[ci];
+    for (const [dr, dc] of DIRECTIONS) {
+      const nr = cc.r + dr, nc = cc.c + dc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+        const fIdx = frontierIndexMap.get(grid[nr][nc].id);
+        if (fIdx !== undefined) {
+          if (!frontierToConstraint.has(fIdx)) frontierToConstraint.set(fIdx, []);
+          frontierToConstraint.get(fIdx)!.push(ci);
+        }
+      }
+    }
+  }
+
+  let propagated = true;
+  while (propagated) {
+    propagated = false;
+    for (let ci = 0; ci < allConstraints.length; ci++) {
+      const cc = allConstraints[ci];
+      let knownMines = 0, unknownIdx: number[] = [];
+      for (const [dr, dc] of DIRECTIONS) {
+        const nr = cc.r + dr, nc = cc.c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          const fIdx = frontierIndexMap.get(grid[nr][nc].id);
+          if (fIdx !== undefined) {
+            if (forced.has(fIdx)) {
+              if (grid[frontierList[fIdx].r][frontierList[fIdx].c].isMine) knownMines++;
+            } else {
+              unknownIdx.push(fIdx);
+            }
+          } else if (grid[nr][nc].isMine) {
+            knownMines++;
+          }
+        }
+      }
+      // If unknown + known == val, all unknown must be mines
+      if (knownMines + unknownIdx.length === cc.val) {
+        for (const idx of unknownIdx) {
+          grid[frontierList[idx].r][frontierList[idx].c].isMine = true;
+          forced.add(idx);
+          propagated = true;
+        }
+      }
+      // If known == val, all unknown must be safe
+      if (knownMines === cc.val) {
+        for (const idx of unknownIdx) {
+          grid[frontierList[idx].r][frontierList[idx].c].isMine = false;
+          forced.add(idx);
+          propagated = true;
+        }
+      }
+    }
+  }
+
+  // Collect remaining undetermined frontier cells
+  const undetermined = frontierList.filter((_, i) => !forced.has(i));
+  // Re-index them for recursive search
+  const undeterminedMap = new Map<number, number>();
+  undetermined.forEach((_, i) => undeterminedMap.set(frontierIndexMap.get(`${undetermined[i].r}-${undetermined[i].c}`)!, i));
+
+  // Quick exit: if all cells are determined, just check constraints
+  if (undetermined.length === 0) {
+    if (checkFinalConstraints()) {
+      // Update counts for all frontier cells
+      for (const f of frontierList) updateLocalCounts(grid, f.r, f.c);
+      for (const cc of allConstraints) updateLocalCounts(grid, cc.r, cc.c);
+      return true;
+    }
+    return false;
+  }
+
   let iterations = 0;
-  const MAX_ITERATIONS = 100000;
+  const MAX_ITERATIONS = 500000;
+
+  const checkUndeterminedConstraints = (index: number): boolean => {
+    for (let ci = 0; ci < allConstraints.length; ci++) {
+      const cc = allConstraints[ci];
+      let placed = 0, potential = 0;
+      for (const [dr, dc] of DIRECTIONS) {
+        const nr = cc.r + dr, nc = cc.c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+          const cell = grid[nr][nc];
+          if (cell.status === 'revealed') {
+            if (cell.isMine) placed++;
+          } else {
+            const fIdx = frontierIndexMap.get(cell.id);
+            if (fIdx !== undefined) {
+              const uIdx = undeterminedMap.get(fIdx);
+              if (uIdx === undefined) {
+                if (cell.isMine) placed++;
+              } else if (uIdx <= index) {
+                if (cell.isMine) placed++;
+              } else {
+                potential++;
+              }
+            } else {
+              if (cell.isMine) placed++;
+            }
+          }
+        }
+      }
+      if (placed > cc.val || placed + potential < cc.val) return false;
+    }
+    return true;
+  };
+
+  const initialUndeterminedMines = undetermined.filter(f => f.wasMine).length;
+  const forcedMineCount = Array.from(forced).filter(i => frontierList[i].isMine).length;
 
   const solve = (index: number, currentMines: number, minTotal: number, maxTotal: number): boolean => {
     if (++iterations > MAX_ITERATIONS) return false;
     if (currentMines > maxTotal) return false;
-    const remainingCells = frontierList.length - index;
-    if (currentMines + remainingCells < minTotal) return false;
-    if (index >= frontierList.length) return checkFinalConstraints();
+    const remaining = undetermined.length - index;
+    if (currentMines + remaining < minTotal) return false;
+    if (index >= undetermined.length) return checkFinalConstraints();
 
-    const cell = frontierList[index];
-    let attempts = [true, false];
+    const cell = undetermined[index];
+    let attempts: boolean[] = [true, false];
     if (cell.r === targetRow && cell.c === targetCol) {
       attempts = [forceMine];
-    } else if (rng() > 0.5) {
-      attempts = [false, true];
     }
 
     for (const isMine of attempts) {
       grid[cell.r][cell.c].isMine = isMine;
-      if (checkPartialValid(grid, index)) {
+      if (checkUndeterminedConstraints(index)) {
         if (solve(index + 1, currentMines + (isMine ? 1 : 0), minTotal, maxTotal)) return true;
       }
     }
@@ -355,13 +462,13 @@ const rearrangeMines = (
   };
 
   // Phase 1: same mine count
-  if (!solve(0, 0, initialFrontierMines, initialFrontierMines)) {
+  if (!solve(0, 0, initialUndeterminedMines, initialUndeterminedMines)) {
     // Phase 2: global balance
-    const minPossible = initialFrontierMines - isolatedMines.length;
-    const maxPossible = initialFrontierMines + isolatedSafe.length;
-    for (const f of frontierList) grid[f.r][f.c].isMine = f.wasMine;
+    const minPossible = initialUndeterminedMines - isolatedMines.length;
+    const maxPossible = initialUndeterminedMines + isolatedSafe.length;
+    for (const f of undetermined) grid[f.r][f.c].isMine = f.wasMine;
     if (!solve(0, 0, minPossible, maxPossible)) {
-      for (const f of frontierList) grid[f.r][f.c].isMine = f.wasMine;
+      for (const f of undetermined) grid[f.r][f.c].isMine = f.wasMine;
       return false;
     }
   }

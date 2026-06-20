@@ -51,9 +51,12 @@ const dbReady = initDb().then((database) => {
     )
   `);
 
+  // ── Table creation (idempotent) ──
+  // Drop old single-PK rewards if it exists (schema migration)
+  db.run('DROP TABLE IF EXISTS rewards');
   db.run(`
     CREATE TABLE IF NOT EXISTS rewards (
-      id              TEXT PRIMARY KEY,
+      id              TEXT NOT NULL,
       account_id      TEXT NOT NULL REFERENCES accounts(id),
       difficulty_name TEXT NOT NULL,
       rows            INTEGER NOT NULL,
@@ -63,7 +66,8 @@ const dbReady = initDb().then((database) => {
       content         TEXT NOT NULL,
       type            TEXT NOT NULL,
       hue             INTEGER NOT NULL,
-      submitted_at    INTEGER NOT NULL
+      submitted_at    INTEGER NOT NULL,
+      PRIMARY KEY (id, account_id)
     )
   `);
 
@@ -98,12 +102,16 @@ const dbReady = initDb().then((database) => {
   saveDb();
   console.log(`[db] connected to ${DB_PATH}`);
 
+  // Graceful shutdown: flush DB before exit
+  process.on('beforeExit', () => { if (dirty) { dirty = false; try { saveDb(); } catch {} } });
+  process.on('exit', () => { if (dirty) { dirty = false; try { saveDb(); } catch {} } });
+
   // ── Nonce cleanup timer (every 10 minutes) ──
   setInterval(() => {
     const before = (db.prepare('SELECT COUNT(*) as cnt FROM submission_nonces WHERE expires_at < ?').get([Date.now()]) as any)?.cnt || 0;
     if (before > 0) {
       db.run('DELETE FROM submission_nonces WHERE expires_at < ?', [Date.now()]);
-      saveDb();
+      scheduleSave();
       console.log(`[db] cleaned ${before} expired nonces`);
     }
   }, 10 * 60 * 1000);
@@ -125,17 +133,35 @@ export async function initDatabase(): Promise<SqlJsDatabase> {
 }
 
 // ── Auto-saving prepared statements ──
-// sql.js has a different API. To make it easier, we re-export a thin wrapper
-// that auto-saves after INSERT/UPDATE/DELETE.
+// Uses debounced async save to prevent sql.js crashes on rapid writes.
 
 const WRITE_OPS = ['INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER'];
+
+let dirty = false;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSave() {
+  dirty = true;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (!dirty) return;
+    dirty = false;
+    try {
+      const data = db.export();
+      fs.writeFileSync(DB_PATH, Buffer.from(data));
+    } catch (e: any) {
+      console.error('[db] save failed:', e.message);
+    }
+  }, 500); // debounce 500ms
+}
 
 export function run(sql: string, params?: any[]): any {
   const d = getDb();
   d.run(sql, params);
   const upper = sql.trim().toUpperCase();
   if (WRITE_OPS.some(op => upper.startsWith(op))) {
-    saveDb();
+    scheduleSave();
   }
 }
 

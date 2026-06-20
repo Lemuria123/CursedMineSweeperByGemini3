@@ -35,6 +35,23 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
     return { valid: false, reason: 'first action must be first_reveal' };
   }
 
+  // ── Validate mine_seed matches grid config ──
+  const expectedPrefix = `${gridConfig.rows}-${gridConfig.cols}-${gridConfig.mines}-`;
+  if (!mine_seed.startsWith(expectedPrefix)) {
+    return { valid: false, reason: `mine_seed prefix mismatch: expected ${expectedPrefix}, got ${mine_seed.slice(0, expectedPrefix.length + 6)}` };
+  }
+
+  // ── Validate total_time_ms ──
+  if (submission.total_time_ms < 100) {
+    return { valid: false, reason: `impossible time: ${submission.total_time_ms}ms` };
+  }
+
+  // ── Validate time against last action ──
+  const lastTs = actions[actions.length - 1].ts;
+  if (submission.total_time_ms < lastTs) {
+    return { valid: false, reason: `total_time_ms (${submission.total_time_ms}) < last action ts (${lastTs})` };
+  }
+
   // ── Reconstruct mine layout ──
   const emptyGrid = createEmptyGrid(gridConfig.rows, gridConfig.cols);
   let board = deterministicPlaceMines(

@@ -257,10 +257,9 @@ const App: React.FC = () => {
                 });
             } else {
                 // Already has reward — still submit record
-                try {
-                  await register('auto', getAccountId());
-                  await submitToServer(null, newPrayersUsed);
-                } catch { /* offline */ }
+                register('auto', getAccountId()).then(() =>
+                  submitToServer(null, newPrayersUsed)
+                ).catch(() => {});
             }
           }
       }
