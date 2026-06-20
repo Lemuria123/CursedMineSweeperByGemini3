@@ -128,16 +128,17 @@ async function start() {
 
     // 5. Store record
     run(
-      'INSERT INTO records (account_id, rows, cols, mines, time_ms, game_data, validated, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO records (account_id, rows, cols, mines, time_ms, game_data, validated, submitted_at, prayers_used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         account_id,
         submission.grid.rows,
         submission.grid.cols,
         submission.grid.mines,
         submission.total_time_ms,
-        payload, // store original encrypted payload
+        payload,
         result.valid ? 1 : 0,
         now,
+        submission.prayers_used,
       ],
     );
 

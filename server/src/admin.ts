@@ -214,6 +214,7 @@ app.get('/records', requireAdmin, (req, res) => {
       <td class="py-3 px-4 text-xs font-mono">${r.rows}x${r.cols}</td>
       <td class="py-3 px-4 text-xs">${r.mines}</td>
       <td class="py-3 px-4 text-xs font-mono text-amber-400">${r.time_ms}ms</td>
+      <td class="py-3 px-4 text-xs">${r.prayers_used === 0 ? '<span class="text-yellow-400 font-bold">★ ACE</span>' : `<span class="text-gray-500">${r.prayers_used >= 0 ? r.prayers_used + ' pray' : '?'}</span>`}</td>
       <td class="py-3 px-4 text-xs text-gray-500">${fmtDate(r.submitted_at)}</td>
       <td class="py-3 px-4"><a href="/replay/${r.id}" class="text-purple-400 hover:underline text-xs">Replay</a></td>
     </tr>`).join('');
@@ -228,8 +229,8 @@ app.get('/records', requireAdmin, (req, res) => {
 </form>
 <div class="bg-gray-800 rounded-xl overflow-hidden">
   <table class="w-full"><thead><tr class="bg-gray-700 text-left text-xs text-gray-400 uppercase">
-    <th class="py-3 px-4">Player</th><th class="py-3 px-4">Size</th><th class="py-3 px-4">Mines</th><th class="py-3 px-4">Time</th><th class="py-3 px-4">Date</th><th class="py-3 px-4">Replay</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6" class="py-6 text-center text-gray-600">No records found</td></tr>'}</tbody></table>
+    <th class="py-3 px-4">Player</th><th class="py-3 px-4">Size</th><th class="py-3 px-4">Mines</th><th class="py-3 px-4">Time</th><th class="py-3 px-4">ACE</th><th class="py-3 px-4">Date</th><th class="py-3 px-4">Replay</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" class="py-6 text-center text-gray-600">No records found</td></tr>'}</tbody></table>
 </div>
 <div class="flex justify-between mt-4 text-sm">
   <span class="text-gray-500">Page ${pageNum} / ${Math.max(1, Math.ceil(total / pageSize))}</span>

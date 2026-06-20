@@ -71,6 +71,18 @@ const dbReady = initDb().then((database) => {
     )
   `);
 
+  // Migration: add prayers_used column if missing (v0.2.2)
+  try {
+    const cols = db.exec("PRAGMA table_info(records)");
+    if (cols.length > 0) {
+      const names = cols[0].values.map((v: any[]) => v[1]);
+      if (!names.includes('prayers_used')) {
+        db.run('ALTER TABLE records ADD COLUMN prayers_used INTEGER NOT NULL DEFAULT -1');
+        console.log('[db] added prayers_used column to records');
+      }
+    }
+  } catch (e: any) { /* table may not exist yet */ }
+
   db.run(`
     CREATE TABLE IF NOT EXISTS records (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +93,8 @@ const dbReady = initDb().then((database) => {
       time_ms     INTEGER NOT NULL,
       game_data   TEXT NOT NULL,
       validated   INTEGER NOT NULL DEFAULT 0,
-      submitted_at INTEGER NOT NULL
+      submitted_at INTEGER NOT NULL,
+      prayers_used INTEGER NOT NULL DEFAULT -1
     )
   `);
 
