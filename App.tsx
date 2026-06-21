@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CursedReward, CellStatus } from './types';
 import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
@@ -12,14 +13,14 @@ import { SettingsModal } from './components/SettingsModal';
 import { GrimoireModal } from './components/LeaderboardModal'; 
 import { Modal } from './components/Modal';
 import { GameRecorder } from './utils/recorder';
-import { getAccountId } from './utils/auth';
-import { register, getAccount, setNickname, getNonce, submitGame } from './utils/api';
+import { ensureAccount } from './utils/auth';
+import { setNickname, getNonce, submitGame, getConfig } from './utils/api';
 import { encrypt } from './utils/encrypt';
 
 // Updated logic: Default mines are now calculated based on the new density formula.
 // Easy: 9x9 (81) -> ~21 mines
 // Medium: 16x16 (256) -> ~58 mines
-// Hard: 16x30 (480) -> ~105 mines
+// Hard: 25x16 (400) -> ~88 mines
 const DIFFICULTIES: Difficulty[] = [
   { name: 'Easy', rows: 9, cols: 9, mines: calculateRecommendedMines(9, 9) },
   { name: 'Medium', rows: 16, cols: 16, mines: calculateRecommendedMines(16, 16) },
@@ -29,6 +30,7 @@ const DIFFICULTIES: Difficulty[] = [
 const DRAG_THRESHOLD = 5;
 
 const App: React.FC = () => {
+  const { t } = useTranslation();
   const [difficulty, setDifficulty] = useState<Difficulty>(DIFFICULTIES[0]);
   const [showSettings, setShowSettings] = useState(false);
   const [showGrimoire, setShowGrimoire] = useState(false);
@@ -53,18 +55,29 @@ const App: React.FC = () => {
 
   // Server integration
   const recorderRef = useRef<GameRecorder>(new GameRecorder());
+  // 从后端配置读取的祈祷奖励阈值（默认 0 = ACE 模式）
+  // 使用 ref 避免回调函数中的闭包陈旧问题
+  const prayerRewardThresholdRef = useRef<number>(0);
   const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
   const [pendingAceReward, setPendingAceReward] = useState<CursedReward | null>(null);
   const [nickname, setNicknameLocal] = useState('');
+  const [nicknameError, setNicknameError] = useState('');
   const [accountNickname, setAccountNickname] = useState<string | null>(null);
 
   // Register on mount
   useEffect(() => {
-    const accountId = getAccountId();
-    register('auto', accountId).then(info => {
-      setAccountNickname(info.nickname);
+    ensureAccount().then(({ nickname }) => {
+      setAccountNickname(nickname);
     }).catch(() => {
       // Offline — will retry on next ACE
+    });
+
+    // 启动时从后端读取配置（祈祷奖励阈值等）
+    getConfig().then(config => {
+      const threshold = parseInt(config.prayer_reward_threshold || '0', 10);
+      prayerRewardThresholdRef.current = isNaN(threshold) ? 0 : threshold;
+    }).catch(() => {
+      // 离线或读取失败时维持默认值 0（ACE 模式）
     });
   }, []);
 
@@ -237,22 +250,26 @@ const App: React.FC = () => {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
-      // Always submit record to server (all wins, ACE or not)
-      register('auto', getAccountId()).then(() =>
-        submitToServer(null, newPrayersUsed)
-      ).catch(() => {});
+      // 根据后端配置的祈祷阈值决定是否提交记录到后端
+      // 只有祈祷次数在阈值范围内才提交（默认 0 = ACE 模式）
+      const threshold = prayerRewardThresholdRef.current;
+      if (newPrayersUsed <= threshold) {
+        ensureAccount().then(({ accountId }) =>
+          submitToServer(accountId, newPrayersUsed)
+        ).catch(() => {});
+      }
 
-      // ACE reward: triggered when mines >= recommended (always true for default difficulties)
-      if (newPrayersUsed === 0 && gameState.difficulty.mines >= calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols) && !hasRewardForDifficulty(gameState.difficulty)) {
+      // ACE 奖励：祈祷次数 ≤ 阈值 + 地雷数达到推荐值 + 尚未获得此难度奖励
+      if (newPrayersUsed <= threshold && gameState.difficulty.mines >= calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols) && !hasRewardForDifficulty(gameState.difficulty)) {
           fetchCursedReward(gameState.difficulty).then(async (reward) => {
               saveReward(reward);
               setNewUnlockedReward(reward);
               setPendingAceReward(reward);
-              // Check nickname for ACE leaderboard (account already registered by submit above)
+              // 账号已在 submit 流程中 ensureAccount；无昵称时弹出设置引导
               try {
-                const accountId = getAccountId();
-                const info = await getAccount(accountId);
-                if (!info.nickname) {
+                const { nickname } = await ensureAccount();
+                if (!nickname) {
+                  setNicknameError('');
                   setShowNicknamePrompt(true);
                 }
               } catch { /* offline — will retry later */ }
@@ -334,8 +351,7 @@ const App: React.FC = () => {
   };
 
   // ── Server submission helper ──
-  const submitToServer = useCallback(async (reward: CursedReward | null, prayersUsed: number) => {
-    const accountId = getAccountId();
+  const submitToServer = useCallback(async (accountId: string, prayersUsed: number) => {
     const nonceData = await getNonce(accountId);
     const payload = recorderRef.current.buildPayload(
       nonceData.nonce,
@@ -351,24 +367,25 @@ const App: React.FC = () => {
   const handleNicknameSubmit = async () => {
     const trimmed = nickname.trim();
     if (!trimmed) return;
+    setNicknameError('');
     try {
-      const accountId = getAccountId();
+      const { accountId } = await ensureAccount();
       await setNickname(accountId, trimmed);
       setAccountNickname(trimmed);
       setShowNicknamePrompt(false);
       setNicknameLocal('');
       // Record already submitted by the win callback — no duplicate submit needed
     } catch {
-      setShowNicknamePrompt(false);
+      setNicknameError(t('common.saveFailed'));
     }
   };
 
   const handleNicknameSkip = () => {
     setShowNicknamePrompt(false);
     setNicknameLocal('');
+    setNicknameError('');
     setPendingAceReward(null);
   };
-
   return (
     <div className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
       
@@ -387,7 +404,7 @@ const App: React.FC = () => {
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2">
                          <h1 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight bg-gradient-to-r from-red-500 to-orange-500">
-                           CURSED MINES
+                           {t('app.title')}
                         </h1>
                     </div>
                 </div>
@@ -396,7 +413,7 @@ const App: React.FC = () => {
                     <button 
                         onClick={() => setShowGrimoire(true)}
                         className="p-2 rounded-full bg-slate-800 text-amber-500 hover:text-amber-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg group relative"
-                        title="Grimoire (Collection)"
+                        title={t('app.grimoireTooltip')}
                     >
                         <BookOpen size={20} />
                     </button>
@@ -404,7 +421,7 @@ const App: React.FC = () => {
                     <button 
                         onClick={() => setShowSettings(true)}
                         className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-all border border-slate-700 shadow-lg relative"
-                        title="Settings"
+                        title={t('app.settingsTooltip')}
                     >
                         <Settings size={20} />
                     </button>
@@ -468,30 +485,34 @@ const App: React.FC = () => {
       {showNicknamePrompt && (
         <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
           <div className="bg-slate-900 border-2 border-amber-900/50 rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center">
-            <h2 className="text-2xl font-bold text-amber-500 mb-2">ACE Complete!</h2>
-            <p className="text-slate-400 mb-6 text-sm">Enter a nickname for the leaderboard.</p>
+            <h2 className="text-2xl font-bold text-amber-500 mb-2">{t('app.aceComplete')}</h2>
+            <p className="text-slate-400 mb-6 text-sm">{t('app.enterNickname')}</p>
             <input
               type="text"
               value={nickname}
               onChange={e => setNicknameLocal(e.target.value.slice(0, 32))}
-              placeholder="Nickname"
+              placeholder={t('app.nicknamePlaceholder')}
               maxLength={32}
-              className="w-full px-4 py-3 rounded-lg bg-slate-800 text-white border border-slate-700 focus:outline-none focus:border-amber-500 mb-4"
+              className="w-full px-4 py-3 rounded-lg bg-slate-800 text-white border border-slate-700 focus:outline-none focus:border-amber-500 mb-2"
               onKeyDown={e => e.key === 'Enter' && handleNicknameSubmit()}
               autoFocus
             />
+            {nicknameError && (
+              <p className="text-red-400 text-sm mb-4">{nicknameError}</p>
+            )}
+            {!nicknameError && <div className="mb-4" />}
             <div className="flex gap-3">
               <button
                 onClick={handleNicknameSkip}
                 className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
               >
-                Skip
+                {t('app.skip')}
               </button>
               <button
                 onClick={handleNicknameSubmit}
                 className="flex-1 py-3 rounded-xl font-bold text-white bg-amber-600 hover:bg-amber-500 transition-colors shadow-lg"
               >
-                Save
+                {t('common.save')}
               </button>
             </div>
           </div>

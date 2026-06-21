@@ -36,11 +36,16 @@ export interface GameState {
 export type RewardType = 'image' | 'text' | 'glitch';
 
 export interface CursedReward {
-  id: string; // unique based on difficulty params
-  date: number;
-  difficultyName: string;
-  title: string;
+  id: string; // 尺寸标识，格式 "rows-cols"（如 "9-9"）
+  date: number; // 获得时间戳
+  difficultyName: string; // 难度名，如 "Easy"
+  title: string; // 奖品标题（模板名或 "ACE"）
+  icon?: string; // emoji / icon identifier from reward template
   content: string; // URL or Text body
   type: RewardType;
   hue: number; // visual theme color
+  mines?: number; // 本局雷数（服务端返回；本地旧数据可能无此字段）
+  // i18n 多语言字段：英文版本的名称与正文（数据库双列方案）
+  nameEn?: string;   // 英文名称
+  contentEn?: string; // 英文正文
 }

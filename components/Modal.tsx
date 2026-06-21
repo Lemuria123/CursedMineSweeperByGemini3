@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Bomb, Eye, Crown, Sparkles } from 'lucide-react';
 import { GameStatus, CursedReward } from '../types';
@@ -14,6 +15,7 @@ interface ModalProps {
 }
 
 export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, newReward, isPrayerFailure, onRestart, onClose }) => {
+  const { t } = useTranslation();
   if (status !== 'won' && status !== 'lost') return null;
 
   const isWin = status === 'won';
@@ -80,34 +82,34 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, newReward, is
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.5 }}
              >
-                 <h2 className="text-xl font-bold text-amber-500 uppercase tracking-widest mb-1">Cursed Artifact</h2>
+                 <h2 className="text-xl font-bold text-amber-500 uppercase tracking-widest mb-1">{t('modal.cursedArtifact')}</h2>
                  <h3 className="text-2xl font-black text-white mb-4 drop-shadow-md">{newReward.title}</h3>
                  <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700 mb-6">
                      <p className="text-xs text-slate-400 font-mono italic">
-                        "Artifact retrieved from the void."
+                        "{t('modal.artifactDesc')}"
                      </p>
                  </div>
              </motion.div>
         ) : (
             <>
                 <h2 className="text-3xl font-extrabold text-white mb-2">
-                {isWin ? (isAced ? 'Pure Victory!' : 'You Won!') : 'Game Over!'}
+                {isWin ? (isAced ? t('modal.pureVictory') : t('modal.youWon')) : t('modal.gameOver')}
                 </h2>
                 
                 <div className="flex flex-wrap gap-2 justify-center mb-4 min-h-[24px]">
                     {isAced && (
                     <span className="inline-flex items-center gap-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
-                        <Sparkles size={12} fill="currentColor" /> ACED
+                        <Sparkles size={12} fill="currentColor" /> {t('modal.aced')}
                     </span>
                     )}
                 </div>
 
                 <p className="text-slate-400 mb-6 text-sm leading-relaxed">
                 {isWin 
-                    ? `Sector cleared using ${prayersUsed} prayers.` 
+                    ? t('modal.clearedWithPrayers', { count: prayersUsed })
                     : (isPrayerFailure 
-                        ? 'Not even prayer can save you from the inevitable.' 
-                        : 'The curse claims another soul.')
+                        ? t('modal.prayerFailure')
+                        : t('modal.curseClaims'))
                 }
                 </p>
             </>
@@ -121,7 +123,7 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, newReward, is
                 ${isWin ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-800' : 'bg-slate-600 hover:bg-slate-500 border-slate-800'}
             `}
             >
-            {newReward ? 'Collect & Continue' : 'Play Again'}
+            {newReward ? t('modal.collectAndContinue') : t('modal.playAgain')}
             </button>
             
             {onClose && (
@@ -130,7 +132,7 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, newReward, is
                     className="w-full py-3 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
                 >
                     <Eye size={18} />
-                    View Board
+                    {t('modal.viewBoard')}
                 </button>
             )}
         </div>

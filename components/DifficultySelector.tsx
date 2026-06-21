@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Difficulty } from '../types';
 import { motion } from 'framer-motion';
 
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export const DifficultySelector: React.FC<Props> = ({ activeName, onChange, options }) => {
+  const { t } = useTranslation();
   return (
     <div className="flex gap-2 bg-slate-900/50 p-1.5 rounded-xl border border-slate-700 w-full justify-center">
       {options.map((opt) => {
@@ -29,7 +31,7 @@ export const DifficultySelector: React.FC<Props> = ({ activeName, onChange, opti
                 transition={{ type: 'spring', duration: 0.5 }}
               />
             )}
-            <span className="relative z-10">{opt.name}</span>
+            <span className="relative z-10">{t(`difficulty.${opt.name}`, opt.name)}</span>
           </button>
         );
       })}

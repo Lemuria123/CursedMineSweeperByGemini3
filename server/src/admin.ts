@@ -42,6 +42,8 @@ const top = (title: string) => `<!DOCTYPE html>
     <a href="/rewards" class="text-gray-400 hover:text-white">Rewards</a>
     <a href="/submissions" class="text-gray-400 hover:text-white">Submissions</a>
     <a href="/maintenance" class="text-gray-400 hover:text-white">Maintenance</a>
+    <a href="/config" class="text-gray-400 hover:text-white">Config</a>
+    <a href="/reward-config" class="text-gray-400 hover:text-white">Reward Config</a>
     <a href="/logout" class="text-red-400 hover:text-white">Logout</a>
   </div>
 </nav>
@@ -746,6 +748,241 @@ app.post('/maintenance/delete-test-data', requireAdmin, (req, res) => {
   <a href="/dashboard" class="text-purple-400 hover:underline text-sm">← Back to Dashboard</a>
 </div>
 `));
+});
+
+// ── Config Management ──
+app.get('/config', requireAdmin, (_req, res) => {
+  // 读取当前所有配置项
+  const configs = all<{ key: string; value: string }>('SELECT key, value FROM config');
+  const prayerThreshold = configs.find(c => c.key === 'prayer_reward_threshold')?.value || '0';
+
+  // 构建配置项表格行
+  const configRows = configs.map(c => `
+    <tr class="border-b border-gray-700">
+      <td class="py-3 px-4 font-mono text-sm text-purple-400">${esc(c.key)}</td>
+      <td class="py-3 px-4 font-mono text-sm text-amber-400">${esc(c.value)}</td>
+      <td class="py-3 px-4 text-xs text-gray-500">${c.key === 'prayer_reward_threshold' ? '玩家祈祷次数 ≤ 此值时获得奖励（0 = 必须零祈祷 ACE）' : ''}</td>
+    </tr>`).join('');
+
+  res.send(page('Config', `
+<h2 class="text-xl font-semibold mb-4">Config — 配置管理</h2>
+
+<div class="bg-gray-800 rounded-xl overflow-hidden mb-8">
+  <table class="w-full"><thead><tr class="bg-gray-700 text-left text-xs text-gray-400 uppercase">
+    <th class="py-3 px-4">配置项</th><th class="py-3 px-4">当前值</th><th class="py-3 px-4">说明</th>
+  </tr></thead>
+    <tbody>${configRows || '<tr><td colspan="3" class="py-6 text-center text-gray-600">暂无配置项</td></tr>'}</tbody></table>
+</div>
+
+<h3 class="text-lg font-semibold mb-4 text-gray-300">修改祈祷奖励阈值</h3>
+<p class="text-sm text-gray-400 mb-4">
+  设定玩家最多可用多少次祈祷仍然能获得奖励。<br>
+  默认值 <code class="text-purple-400">0</code> 表示必须零祈祷（ACE）才能获得奖励。<br>
+  例如设为 <code class="text-purple-400">3</code> 表示使用 ≤ 3 次祈祷也可获得奖励。
+</p>
+
+<form method="POST" action="/config" class="bg-gray-800 rounded-xl p-6 space-y-4 max-w-md">
+  <div>
+    <label class="block text-sm text-gray-400 mb-2">prayer_reward_threshold（祈祷奖励阈值）</label>
+    <input name="prayer_reward_threshold" type="number" min="0" max="999" value="${escAttr(prayerThreshold)}" required
+      class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500" />
+  </div>
+  <button type="submit" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition">
+    保存配置
+  </button>
+</form>
+`));
+});
+
+app.post('/config', requireAdmin, (req, res) => {
+  const threshold = parseInt(req.body.prayer_reward_threshold, 10);
+  if (isNaN(threshold) || threshold < 0) {
+    return res.send(page('Config — Error', `
+<h2 class="text-xl font-semibold mb-4 text-red-400">配置更新失败</h2>
+<p class="text-gray-400 mb-4">无效的阈值：必须是非负整数。</p>
+<a href="/config" class="text-purple-400 hover:underline text-sm">← 返回配置</a>
+`));
+  }
+
+  // 更新配置（INSERT OR REPLACE）
+  run('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)', ['prayer_reward_threshold', String(threshold)]);
+
+  res.send(page('Config — Updated', `
+<h2 class="text-xl font-semibold mb-4 text-green-400">配置已更新</h2>
+<div class="bg-gray-800 rounded-xl p-6 space-y-2 text-sm mb-4">
+  <p><span class="text-gray-400">prayer_reward_threshold =</span> <span class="text-amber-400 font-bold font-mono">${threshold}</span></p>
+  <p class="text-gray-300 mt-2">玩家祈祷次数 ≤ <span class="text-amber-400 font-bold">${threshold}</span> 时将获得奖励。</p>
+  ${threshold === 0
+    ? '<p class="text-yellow-400 text-xs mt-1">→ 当前为 ACE 模式：必须零祈祷。</p>'
+    : `<p class="text-yellow-400 text-xs mt-1">→ 当前为宽松模式：最多允许 ${threshold} 次祈祷。</p>`}
+</div>
+<a href="/config" class="text-purple-400 hover:underline text-sm">← 返回配置</a>
+`));
+});
+
+// ── Reward Config Management ──
+
+// GET: 显示所有奖品模板列表 + 新增/编辑表单
+app.get('/reward-config', requireAdmin, (req, res) => {
+  const templates = all<{ id: string; rows: number; cols: number; name: string; name_en: string; icon: string; content: string; content_en: string; type: string; hue: number }>(
+    'SELECT * FROM reward_templates ORDER BY rows, cols');
+  const editId = (req.query.edit as string) || '';
+  const editTemplate = editId ? templates.find(t => t.id === editId) : null;
+
+  // 构建模板表格行
+  const rows = templates.map(t => `
+    <tr class="border-b border-gray-700 hover:bg-gray-800">
+      <td class="py-3 px-3 font-mono text-sm text-amber-400">${t.rows}x${t.cols}</td>
+      <td class="py-3 px-3 text-sm">${t.icon ? `<span class="text-lg mr-1">${esc(t.icon)}</span>` : ''}${esc(t.name) || '<span class="text-gray-600">未设置</span>'}</td>
+      <td class="py-3 px-3 text-xs text-gray-400 max-w-[200px] truncate">${esc(t.content) || '<span class="text-gray-600">—</span>'}</td>
+      <td class="py-3 px-3 text-xs"><span class="px-2 py-0.5 rounded text-[10px] ${t.type === 'image' ? 'bg-blue-900 text-blue-300' : t.type === 'glitch' ? 'bg-purple-900 text-purple-300' : 'bg-green-900 text-green-300'}">${esc(t.type)}</span></td>
+      <td class="py-3 px-3 text-xs text-gray-500">${t.hue}°</td>
+      <td class="py-3 px-3 flex gap-2">
+        <a href="/reward-config?edit=${t.id}" class="text-purple-400 hover:underline text-xs">编辑</a>
+        <form method="POST" action="/reward-config/delete" class="inline" onsubmit="return confirm('确认删除 ${escAttr(t.rows + 'x' + t.cols)} 的奖品模板？')">
+          <input type="hidden" name="id" value="${t.id}" />
+          <button type="submit" class="text-red-400 hover:underline text-xs">删除</button>
+        </form>
+      </td>
+    </tr>`).join('');
+
+  // 编辑模式下预填值
+  const formTitle = editTemplate ? `编辑奖品模板: ${editTemplate.rows}x${editTemplate.cols}` : '新增奖品模板';
+  const formId = editTemplate?.id ?? '';
+  const formRows = editTemplate?.rows ?? '';
+  const formCols = editTemplate?.cols ?? '';
+  const formName = editTemplate?.name ?? '';
+  const formNameEn = editTemplate?.name_en ?? '';
+  const formIcon = editTemplate?.icon ?? '';
+  const formContent = editTemplate?.content ?? '';
+  const formContentEn = editTemplate?.content_en ?? '';
+  const formType = editTemplate?.type ?? 'text';
+  const formHue = editTemplate?.hue ?? 0;
+  const rowsColsReadonly = editTemplate ? 'readonly' : '';
+
+  const typeOptions = ['text', 'image', 'glitch'].map(v =>
+    `<option value="${v}" ${formType === v ? 'selected' : ''}>${v}</option>`).join('');
+
+  res.send(page('Reward Config', `
+<h2 class="text-xl font-semibold mb-4">Reward Config — 奖品模板配置</h2>
+
+<p class="text-sm text-gray-400 mb-6">
+  为每种棋盘尺寸配置奖品信息。玩家达成条件后，将从对应模板读取名称、图标和文字内容写入奖品记录。<br>
+  模板为空时，默认使用「ACE」作为奖品标题。
+</p>
+
+<!-- 模板列表 -->
+<h3 class="text-lg font-semibold mb-3 text-gray-300">现有模板 (${templates.length})</h3>
+<div class="bg-gray-800 rounded-xl overflow-hidden mb-8">
+  <table class="w-full"><thead><tr class="bg-gray-700 text-left text-xs text-gray-400 uppercase">
+    <th class="py-3 px-3">棋盘</th><th class="py-3 px-3">名称</th><th class="py-3 px-3">文字</th><th class="py-3 px-3">类型</th><th class="py-3 px-3">色调</th><th class="py-3 px-3">操作</th>
+  </tr></thead>
+    <tbody>${rows || '<tr><td colspan="6" class="py-6 text-center text-gray-600">暂无奖品模板，请在下方新增</td></tr>'}</tbody></table>
+</div>
+
+<!-- 新增/编辑表单 -->
+<h3 class="text-lg font-semibold mb-4 text-gray-300">${formTitle}</h3>
+<form method="POST" action="/reward-config" class="bg-gray-800 rounded-xl p-6 space-y-4 max-w-lg">
+  ${formId ? `<input type="hidden" name="id" value="${escAttr(formId)}" />` : ''}
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">行数 (Rows)</label>
+      <input name="rows" type="number" min="8" max="25" value="${formRows}" ${rowsColsReadonly} required
+        class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+    </div>
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">列数 (Cols)</label>
+      <input name="cols" type="number" min="8" max="25" value="${formCols}" ${rowsColsReadonly} required
+        class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+    </div>
+  </div>
+  <div>
+    <label class="block text-sm text-gray-400 mb-1">奖品名称 (Name)</label>
+    <input name="name" type="text" maxlength="64" value="${escAttr(formName)}" placeholder="例如: 火之魔典"
+      class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+  </div>
+  <div>
+    <label class="block text-sm text-gray-400 mb-1">英文名称 (Name EN)</label>
+    <input name="name_en" type="text" maxlength="128" value="${escAttr(formNameEn)}" placeholder="例如: Tome of Fire"
+      class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+  </div>
+  <div>
+    <label class="block text-sm text-gray-400 mb-1">图标 (Icon) — 支持 emoji</label>
+    <input name="icon" type="text" maxlength="8" value="${escAttr(formIcon)}" placeholder="例如: 📖"
+      class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+  </div>
+  <div>
+    <label class="block text-sm text-gray-400 mb-1">描述文字 (Content)</label>
+    <textarea name="content" rows="3" maxlength="500" placeholder="奖品描述文本..."
+      class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm resize-none">${esc(formContent)}</textarea>
+  </div>
+  <div>
+    <label class="block text-sm text-gray-400 mb-1">英文描述文字 (Content EN)</label>
+    <textarea name="content_en" rows="3" maxlength="1000" placeholder="English description..."
+      class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm resize-none">${esc(formContentEn)}</textarea>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">显示类型 (Type)</label>
+      <select name="type" class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm">${typeOptions}</select>
+    </div>
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">色调 (Hue 0-360)</label>
+      <input name="hue" type="number" min="0" max="360" value="${formHue}"
+        class="w-full px-3 py-2 rounded bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500 text-sm" />
+    </div>
+  </div>
+  <div class="flex gap-3">
+    <button type="submit" class="flex-1 py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition text-sm">
+      ${editTemplate ? '保存修改' : '新增模板'}
+    </button>
+    ${editTemplate ? `<a href="/reward-config" class="py-3 px-6 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition text-sm">取消编辑</a>` : ''}
+  </div>
+</form>
+`));
+});
+
+// POST: 新增或更新奖品模板
+app.post('/reward-config', requireAdmin, (req, res) => {
+  const { id, rows, cols, name, name_en, icon, content, content_en, type, hue } = req.body;
+  const r = parseInt(rows), c = parseInt(cols), h = parseInt(hue) || 0;
+
+  if (isNaN(r) || isNaN(c) || r < 8 || c < 8 || r > 25 || c > 25) {
+    return res.send(page('Reward Config — Error', `
+<h2 class="text-xl font-semibold mb-4 text-red-400">操作失败</h2>
+<p class="text-gray-400 mb-4">无效的行列值（范围 8-25）。</p>
+<a href="/reward-config" class="text-purple-400 hover:underline text-sm">← 返回</a>`));
+  }
+
+  // 如果是编辑已有模板，使用原 id；否则生成新 id
+  const templateId = id || `${r}-${c}`;
+
+  // 检查该尺寸是否已有其他模板（防止新增重复）
+  if (!id) {
+    const existing = get('SELECT id FROM reward_templates WHERE rows = ? AND cols = ?', [r, c]);
+    if (existing) {
+      return res.send(page('Reward Config — Error', `
+<h2 class="text-xl font-semibold mb-4 text-red-400">操作失败</h2>
+<p class="text-gray-400 mb-4">棋盘 ${r}x${c} 已有奖品模板，请编辑而非新增。</p>
+<a href="/reward-config" class="text-purple-400 hover:underline text-sm">← 返回</a>`));
+    }
+  }
+
+  run(
+    'INSERT OR REPLACE INTO reward_templates (id, rows, cols, name, name_en, icon, content, content_en, type, hue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [templateId, r, c, name || '', name_en || '', icon || '', content || '', content_en || '', type || 'text', h],
+  );
+
+  res.redirect('/reward-config');
+});
+
+// POST: 删除奖品模板
+app.post('/reward-config/delete', requireAdmin, (req, res) => {
+  const { id } = req.body;
+  if (id) {
+    run('DELETE FROM reward_templates WHERE id = ?', [id]);
+  }
+  res.redirect('/reward-config');
 });
 
 // ── Helpers ──

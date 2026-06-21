@@ -16,6 +16,7 @@ build/
 .env.*.local
 
 # IDE
+.cursor/
 .vscode/
 .idea/
 *.swp
@@ -43,6 +44,15 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Generated / downloaded assets (root-level only)
+/Generated Image*
+
+# Skills
+.agents/skills/
+skills-lock.json
+skills-main/
+skills-main.zip
 
 # Misc
 *.pem

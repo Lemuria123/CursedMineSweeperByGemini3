@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Bomb } from 'lucide-react';
 import { GameStatus } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -89,7 +90,8 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   onReset,
   onTogglePrayer
 }) => {
-  
+  const { t } = useTranslation();
+
   return (
     <div className="relative flex items-center justify-between w-full max-w-2xl mx-auto h-20 bg-slate-900/40 backdrop-blur-md rounded-2xl shadow-xl border border-white/5 px-2 sm:px-4 mb-6">
       
@@ -110,7 +112,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
           <button
             onClick={onReset}
             className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center bg-gradient-to-b from-slate-700 to-slate-800 rounded-2xl shadow-[0_8px_0_rgb(30,41,59)] active:shadow-none active:translate-y-[8px] active:bg-slate-800 transition-all border border-slate-600 hover:brightness-110 group"
-            title="Reset Game"
+            title={t('game.resetGame')}
           >
             <div className="w-full h-full p-1 transition-transform group-hover:scale-105">
                 <FaceIcon status={status} />
@@ -118,34 +120,38 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
           </button>
       </div>
 
-      {/* 3. RIGHT: Prayer Toggle (Redemption) */}
+      {/* 3. RIGHT: Prayer Toggle（与左侧雷数计数器对称，展示本局已祈祷次数） */}
       <div className="flex-1 flex justify-end">
           <button
             onClick={onTogglePrayer}
             disabled={status !== 'playing' && status !== 'idle'}
             className={`
-                relative flex items-center gap-2 px-3 py-2 rounded-xl border transition-all duration-300 min-w-[90px] sm:min-w-[110px] justify-center group
+                relative flex items-center gap-3 px-4 py-2 rounded-xl border transition-all duration-300 min-w-[90px] sm:min-w-[110px] justify-start group
                 ${isPraying 
-                    ? 'bg-amber-900/30 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)] translate-y-[1px]' 
-                    : 'bg-slate-800/50 border-slate-700 hover:bg-slate-800 hover:border-slate-500 shadow-lg'
+                    ? 'bg-amber-900/30 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.25)] translate-y-[1px]' 
+                    : 'bg-slate-950/50 border-amber-900/20 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] hover:border-amber-700/40 hover:bg-slate-900/60'
                 }
             `}
-            title="Toggle Prayer Mode (Safe Guessing)"
+            title={t('game.togglePrayer')}
           >
-            {/* Glow effect when active */}
+            {/* 激活时按钮内层柔和光晕 */}
             {isPraying && (
                 <motion.div
                     layoutId="prayer-glow"
-                    className="absolute inset-0 bg-amber-500/10 rounded-xl animate-pulse" 
+                    className="absolute inset-0 bg-amber-500/10 rounded-xl animate-pulse pointer-events-none" 
                 />
             )}
 
-            <div className={`w-8 h-8 ${isPraying ? 'text-amber-400 drop-shadow-[0_0_5px_rgba(245,158,11,0.8)]' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                 <PrayingHands isActive={isPraying} />
+            {/* 祈祷图标：40×40，整图自带圆形光晕 */}
+            <div className="relative z-10 shrink-0 w-10 h-10">
+              <PrayingHands isActive={isPraying} />
             </div>
-            
-            <span className={`hidden sm:block text-xs font-bold uppercase tracking-wider ${isPraying ? 'text-amber-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                {isPraying ? 'PRAYING' : 'PRAY'}
+
+            {/* 本局累计祈祷次数（与左侧雷数区对称，仅图标 + 数字） */}
+            <span className={`relative z-10 text-2xl font-mono font-bold tracking-widest drop-shadow-sm ${
+              isPraying ? 'text-amber-300' : 'text-amber-400/90 group-hover:text-amber-300'
+            }`}>
+              {prayersUsed}
             </span>
           </button>
       </div>

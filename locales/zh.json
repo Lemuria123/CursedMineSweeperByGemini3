@@ -1,0 +1,78 @@
+{
+  "common": {
+    "save": "保存",
+    "cancel": "取消",
+    "saving": "保存中…",
+    "saveFailed": "保存失败，请检查网络后重试"
+  },
+  "app": {
+    "title": "CURSED MINES",
+    "grimoireTooltip": "Grimoire（法典）",
+    "settingsTooltip": "Settings（设置）",
+    "aceComplete": "ACE Complete!",
+    "enterNickname": "请输入排行榜昵称",
+    "nicknamePlaceholder": "昵称",
+    "skip": "跳过",
+    "nicknameEmpty": "昵称不能为空"
+  },
+  "settings": {
+    "noNickname": "未设置昵称",
+    "setNickname": "设置",
+    "editNickname": "修改",
+    "cursedTitle": "YOU ARE <1>被诅咒了</1>",
+    "ruleBlindGuess": "盲猜会受到惩罚。",
+    "ruleMine": "如果一个格子 <1>可能</1> 是地雷，那它 <3>就是</3> 地雷。",
+    "rulePrayer": "只有祈祷能拯救你。",
+    "selectDifficulty": "选择难度",
+    "rows": "行",
+    "cols": "列",
+    "curseDensity": "诅咒密度",
+    "mines": "{count} 雷 ({pct}%)",
+    "startNewGame": "开始新游戏",
+    "rowsError": "行数必须在 {min} 到 {max} 之间",
+    "colsError": "列数必须在 {min} 到 {max} 之间",
+    "language": "语言",
+    "langZh": "中",
+    "langEn": "EN"
+  },
+  "game": {
+    "resetGame": "重新开始",
+    "togglePrayer": "切换祈祷模式（安全猜测）"
+  },
+  "modal": {
+    "cursedArtifact": "诅咒遗物",
+    "artifactDesc": "从虚空中回收的遗物。",
+    "pureVictory": "完美胜利！",
+    "youWon": "你赢了！",
+    "gameOver": "游戏结束！",
+    "aced": "ACE",
+    "clearedWithPrayers": "已清除区域，使用了 {count} 次祈祷。",
+    "prayerFailure": "连祈祷也无法拯救你逃离命运的洪流。",
+    "curseClaims": "诅咒又夺走了一个灵魂。",
+    "collectAndContinue": "拾取并继续",
+    "playAgain": "再来一局",
+    "viewBoard": "查看棋盘"
+  },
+  "grimoire": {
+    "title": "Grimoire（法典）",
+    "artifactsTab": "遗物",
+    "recordsTab": "记录",
+    "loading": "加载中…",
+    "yourBest": "你的最佳成绩",
+    "noRecord": "暂无个人记录",
+    "noLeaderboard": "暂无排行榜数据",
+    "scrollMore": "滚动加载更多（还剩 {remaining} 条）",
+    "artifactsFooter": "通过 ACE 胜利收集遗物",
+    "recordsFooter": "时间已验证 · 反作弊保护",
+    "artifactFlavor": "这件遗物见证了一个靠逻辑求存的现实。",
+    "offline": "离线",
+    "minesUnit": "{count} 雷",
+    "recordsCount": "{count} 条记录"
+  },
+  "difficulty": {
+    "Easy": "简单",
+    "Medium": "中等",
+    "Hard": "困难",
+    "Custom": "自定义"
+  }
+}

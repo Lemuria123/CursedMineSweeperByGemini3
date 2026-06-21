@@ -51,9 +51,7 @@ const dbReady = initDb().then((database) => {
     )
   `);
 
-  // ── Table creation (idempotent) ──
-  // Drop old single-PK rewards if it exists (schema migration)
-  db.run('DROP TABLE IF EXISTS rewards');
+  // 奖励记录表（服务器权威数据，持久化保存，重启不会丢失）
   db.run(`
     CREATE TABLE IF NOT EXISTS rewards (
       id              TEXT NOT NULL,
@@ -63,7 +61,9 @@ const dbReady = initDb().then((database) => {
       cols            INTEGER NOT NULL,
       mines           INTEGER NOT NULL,
       title           TEXT NOT NULL,
+      name_en         TEXT NOT NULL DEFAULT '',
       content         TEXT NOT NULL,
+      content_en      TEXT NOT NULL DEFAULT '',
       type            TEXT NOT NULL,
       hue             INTEGER NOT NULL,
       submitted_at    INTEGER NOT NULL,
@@ -75,6 +75,8 @@ const dbReady = initDb().then((database) => {
   try { migrateAddColumn('records', 'prayers_used', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
   // Migration: add verify_reason column if missing (v0.2.3)
   try { migrateAddColumn('records', 'verify_reason', "TEXT DEFAULT NULL"); } catch {}
+  // Migration: add icon column to rewards (v0.3.0 — reward templates)
+  try { migrateAddColumn('rewards', 'icon', "TEXT NOT NULL DEFAULT ''"); } catch {}
 
   function migrateAddColumn(table: string, col: string, def: string) {
     const cols = db.exec(`PRAGMA table_info(${table})`);
@@ -115,6 +117,53 @@ const dbReady = initDb().then((database) => {
   `);
 
   db.run('CREATE INDEX IF NOT EXISTS idx_nonces_expires ON submission_nonces(expires_at)');
+
+  // ── 配置表（key-value 键值对） ──
+  // 存储可动态调整的服务器配置项
+  // 默认配置：祈祷奖励阈值为 0（即必须零祈祷才能获得 ACE 奖励）
+  db.run(`
+    CREATE TABLE IF NOT EXISTS config (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+  db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('prayer_reward_threshold', '0')`);
+
+  // ── 奖品模板表 ──
+  // 每种棋盘尺寸可以配置一个奖品模板（名称、图标、文字、类型、色调）
+  // 玩家达成条件后，从此表读取奖品信息写入 rewards 表
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reward_templates (
+      id         TEXT PRIMARY KEY,
+      rows       INTEGER NOT NULL,
+      cols       INTEGER NOT NULL,
+      name       TEXT NOT NULL DEFAULT '',
+      name_en    TEXT NOT NULL DEFAULT '',
+      icon       TEXT NOT NULL DEFAULT '',
+      content    TEXT NOT NULL DEFAULT '',
+      content_en TEXT NOT NULL DEFAULT '',
+      type       TEXT NOT NULL DEFAULT 'text',
+      hue        INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(rows, cols)
+    )
+  `);
+
+  // 迁移：为已有 reward_templates 表添加 i18n 列（name_en、content_en）
+  // PRAGMA table_info 兼容已有数据库；若列不存在则添加
+  const templateCols = db.exec('PRAGMA table_info(reward_templates)');
+  const templateColNames = templateCols.length > 0 ? templateCols[0].values.map((v: any[]) => v[1]) : [];
+  const hasNameEn = templateColNames.includes('name_en');
+  const hasContentEn = templateColNames.includes('content_en');
+  if (!hasNameEn) db.run('ALTER TABLE reward_templates ADD COLUMN name_en TEXT NOT NULL DEFAULT \'\'');
+  if (!hasContentEn) db.run('ALTER TABLE reward_templates ADD COLUMN content_en TEXT NOT NULL DEFAULT \'\'');
+
+  // 迁移：为已有 rewards 表添加 i18n 列（name_en、content_en）
+  const rewardsCols = db.exec('PRAGMA table_info(rewards)');
+  const rewardsColNames = rewardsCols.length > 0 ? rewardsCols[0].values.map((v: any[]) => v[1]) : [];
+  const hasRewardsNameEn = rewardsColNames.includes('name_en');
+  const hasRewardsContentEn = rewardsColNames.includes('content_en');
+  if (!hasRewardsNameEn) db.run('ALTER TABLE rewards ADD COLUMN name_en TEXT NOT NULL DEFAULT \'\'');
+  if (!hasRewardsContentEn) db.run('ALTER TABLE rewards ADD COLUMN content_en TEXT NOT NULL DEFAULT \'\'');
 
   saveDb();
   console.log(`[db] connected to ${DB_PATH}`);
