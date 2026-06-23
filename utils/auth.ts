@@ -47,20 +47,6 @@ export function setServerAccountId(id: string): void {
 }
 
 /**
- * 返回已持久化的服务端 account_id；若尚未注册则返回 null。
- * 异步场景请优先使用 ensureAccount()。
- */
-export function getAccountId(): string | null {
-  if (cachedAccountId) return cachedAccountId;
-  const id = localStorage.getItem(ACCOUNT_STORAGE_KEY);
-  if (id) {
-    cachedAccountId = id;
-    return id;
-  }
-  return null;
-}
-
-/**
  * 确保账号已在服务端注册，返回服务端 account_id 与昵称。
  * 并发调用共享同一 Promise，避免重复注册。
  */

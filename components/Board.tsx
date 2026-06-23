@@ -12,7 +12,6 @@ interface BoardProps {
 }
 
 export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onCellRightClick, highlightedCells = [] }) => {
-  const rows = grid.length;
   const cols = grid[0].length;
 
   return (

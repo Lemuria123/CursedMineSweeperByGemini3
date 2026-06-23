@@ -257,9 +257,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Quick Presets */}
         <div className="mb-5 shrink-0">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 text-center">
-                {t('settings.selectDifficulty')}
-            </label>
             <DifficultySelector 
                 activeName={activePreset}
                 onChange={handlePresetClick}
@@ -278,7 +275,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="flex items-stretch">
                         <button
                             onClick={() => setRows(r => Math.max(MIN_DIM, r - 1))}
-                            className="flex items-center justify-center w-9 bg-slate-800 border border-slate-600 rounded-l-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
+                            className="flex items-center justify-center w-12 h-10 bg-slate-800 border border-slate-600 rounded-l-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
                         >
                             <Minus size={14} />
                         </button>
@@ -289,11 +286,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 const val = parseInt(e.target.value);
                                 if (!isNaN(val)) setRows(val);
                             }}
-                            className="w-full bg-slate-800 border-y border-slate-600 px-2 py-2 text-white font-mono text-center focus:border-amber-500 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [appearance:textfield]"
+                            className="w-full h-10 bg-slate-800 border-y border-slate-600 px-2 text-white font-mono text-center focus:border-amber-500 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [appearance:textfield]"
                         />
                         <button
                             onClick={() => setRows(r => Math.min(MAX_ROWS, r + 1))}
-                            className="flex items-center justify-center w-9 bg-slate-800 border border-slate-600 rounded-r-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
+                            className="flex items-center justify-center w-12 h-10 bg-slate-800 border border-slate-600 rounded-r-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
                         >
                             <Plus size={14} />
                         </button>
@@ -306,7 +303,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="flex items-stretch">
                         <button
                             onClick={() => setCols(c => Math.max(MIN_DIM, c - 1))}
-                            className="flex items-center justify-center w-9 bg-slate-800 border border-slate-600 rounded-l-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
+                            className="flex items-center justify-center w-12 h-10 bg-slate-800 border border-slate-600 rounded-l-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
                         >
                             <Minus size={14} />
                         </button>
@@ -317,11 +314,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                                 const val = parseInt(e.target.value);
                                 if (!isNaN(val)) setCols(val);
                             }}
-                            className="w-full bg-slate-800 border-y border-slate-600 px-2 py-2 text-white font-mono text-center focus:border-amber-500 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [appearance:textfield]"
+                            className="w-full h-10 bg-slate-800 border-y border-slate-600 px-2 text-white font-mono text-center focus:border-amber-500 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [appearance:textfield]"
                         />
                         <button
                             onClick={() => setCols(c => Math.min(MAX_COLS, c + 1))}
-                            className="flex items-center justify-center w-9 bg-slate-800 border border-slate-600 rounded-r-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
+                            className="flex items-center justify-center w-12 h-10 bg-slate-800 border border-slate-600 rounded-r-lg text-slate-400 hover:text-white hover:bg-slate-700 active:bg-slate-950 transition-colors"
                         >
                             <Plus size={14} />
                         </button>
@@ -333,10 +330,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div>
                  <div className="flex justify-between items-end mb-2">
                     <label className="flex items-center gap-2 text-slate-400 text-xs uppercase font-bold">
-                        <Bomb size={14} /> {t('settings.curseDensity')}
+                        <Bomb size={14} /> {t('settings.curseDensity', { pct: Math.round((mines / (rows * cols)) * 100) })}
                     </label>
                     <span className={`text-xs font-mono font-bold ${mines >= recommended ? 'text-red-400' : 'text-emerald-400'}`}>
-                        {t('settings.mines', { count: mines, pct: Math.round((mines / (rows * cols)) * 100) })}
+                        {t('settings.mines', { count: mines })}
                     </span>
                  </div>
                  <input 

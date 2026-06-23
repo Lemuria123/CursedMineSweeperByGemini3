@@ -11,8 +11,10 @@ server/dist/
 *.db-journal
 *.db-wal
 *.db-shm
+*.db.corrupt-backup
 *.sqlite
 *.sqlite3
+server/data/
 
 # Environment variables
 .env

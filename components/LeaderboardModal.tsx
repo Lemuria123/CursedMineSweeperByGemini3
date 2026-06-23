@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
-import { X, Book, Lock, Sparkles, Grid3X3, Bomb, LayoutGrid, List, Trophy, Clock, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Lock, Sparkles, Grid3X3, Bomb, LayoutGrid, List, Trophy, ChevronDown, ChevronUp } from 'lucide-react';
 import { CursedReward, Difficulty } from '../types';
 import { getAllRewards } from '../utils/storage';
 import { getRewards as getRemoteRewards, getMyRecords, getLeaderboard } from '../utils/api';
@@ -19,12 +19,14 @@ type Tab = 'artifacts' | 'records';
 const MIN_ROWS = 8, MAX_ROWS = 25;
 const MIN_COLS = 8, MAX_COLS = 25;
 
-/** 矩阵角标列/行宽度（px） */
-const MATRIX_HEADER_SIZE = 40;
+/** 矩阵角标列/行宽度（px）—— 比单元格略宽以容纳行号/列号 */
+const MATRIX_HEADER_SIZE = 36;
 /** 矩阵单元格边长（px） */
 const MATRIX_CELL_SIZE = 32;
 /** 弹窗内边距 p-6 左右合计（px） */
 const MODAL_PADDING_X = 48;
+/** 弹窗边框 border 左右合计（px） */
+const MODAL_BORDER_X = 2;
 /** 遮罩层 p-4 左右合计（px） */
 const OUTER_PADDING_X = 32;
 /** 宝物详情页 max-w-md（px），主弹窗宽度不得低于此值 */
@@ -40,16 +42,16 @@ const computeGrimoireModalWidth = (): number => {
   const matrixContentWidth = MATRIX_HEADER_SIZE + colsCount * MATRIX_CELL_SIZE;
 
   if (typeof window === 'undefined') {
-    return matrixContentWidth + MODAL_PADDING_X;
+    return matrixContentWidth + MODAL_PADDING_X + MODAL_BORDER_X;
   }
 
   const viewportCap =
-    window.innerWidth * 0.95 - OUTER_PADDING_X - MODAL_PADDING_X;
+    window.innerWidth * 0.95 - OUTER_PADDING_X - MODAL_PADDING_X - MODAL_BORDER_X;
   const contentWidth = Math.max(
     DETAIL_PANEL_MIN_WIDTH,
     Math.min(matrixContentWidth, viewportCap)
   );
-  return contentWidth + MODAL_PADDING_X;
+  return contentWidth + MODAL_PADDING_X + MODAL_BORDER_X;
 };
 
 /**
@@ -170,7 +172,7 @@ const RecipeBoardLeaderboard: React.FC<{
         </div>
 
         {/* 排行榜列表（可滚动） */}
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1 -mr-1">
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1">
           {entries.length > 0 ? (
             <div className="space-y-1">
               {entries.map((e: any) => (
@@ -218,12 +220,12 @@ const MatrixView: React.FC<{
 
   return (
     // 填满父容器高度，矩阵内部拖拽平移，避免外层 content 区再出现纵向滚动条
-    <div className="w-full h-full relative rounded-lg border border-slate-700 bg-slate-900/50 overflow-hidden" style={{ touchAction: 'none' }}>
+    <div className="w-full h-full relative rounded-lg bg-slate-900/50 overflow-hidden" style={{ touchAction: 'none' }}>
       <div ref={scrollRef} className="w-full h-full overflow-auto no-scrollbar cursor-grab active:cursor-grabbing select-none overscroll-contain"
         onPointerDown={e => { if (!scrollRef.current) return; isDown.current = true; isDragging.current = false; startPos.current = { x: e.clientX, y: e.clientY, sl: scrollRef.current.scrollLeft, st: scrollRef.current.scrollTop }; /* 仅触屏/笔使用 pointer capture 实现拖拽滚动；鼠标不使用 capture，否则 mousedown/mouseup 会路由到不同元素导致 click 事件不触发 */ if (e.pointerType !== 'mouse') { e.currentTarget.setPointerCapture(e.pointerId); } }}
         onPointerMove={e => { if (!isDown.current || !scrollRef.current) return; const dx = e.clientX - startPos.current.x, dy = e.clientY - startPos.current.y; if (Math.abs(dx) > 3 || Math.abs(dy) > 3) isDragging.current = true; if (isDragging.current) { scrollRef.current.scrollLeft = startPos.current.sl - dx; scrollRef.current.scrollTop = startPos.current.st - dy; } }}
         onPointerUp={e => { isDown.current = false; /* 仅在非鼠标输入时释放 capture */ if (e.pointerType !== 'mouse') { e.currentTarget.releasePointerCapture(e.pointerId); } }}>
-        <div className="grid bg-slate-900" style={{ gridTemplateColumns: `40px repeat(${colsCount}, 32px)`, gridTemplateRows: `40px repeat(${rowsCount}, 32px)`, width: 'max-content', height: 'max-content' }}>
+        <div className="grid bg-slate-900" style={{ gridTemplateColumns: `${MATRIX_HEADER_SIZE}px repeat(${colsCount}, ${MATRIX_CELL_SIZE}px)`, gridTemplateRows: `${MATRIX_HEADER_SIZE}px repeat(${rowsCount}, ${MATRIX_CELL_SIZE}px)`, width: 'max-content', height: 'max-content' }}>
           <div className="sticky top-0 left-0 z-30 bg-slate-800 border-b border-r border-slate-600 flex items-center justify-center shadow-lg"><Grid3X3 size={16} className="text-amber-500" /></div>
           {Array.from({ length: colsCount }).map((_, i) => <div key={`ch-${i}`} className="sticky top-0 z-20 bg-slate-800 border-b border-slate-700 flex items-end justify-center pb-2 shadow-sm"><span className="text-[10px] text-slate-400 font-mono -rotate-45 origin-bottom translate-y-[-4px] select-none">{MIN_COLS + i}</span></div>)}
           {Array.from({ length: rowsCount }).map((_, ri) => {
@@ -534,11 +536,17 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
       <motion.div key="main" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
             style={{ width: modalWidthPx }}
             className="relative bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] h-[85vh] flex flex-col overflow-hidden max-w-[95vw] shrink-0">
-            {/* Header */}
+            {/* Header - tabs as title bar, placed left of list/matrix toggle */}
             <div className="flex-none flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-3 rounded-full bg-amber-900/20 text-amber-500 border border-amber-900/50"><Book size={24} /></div>
-                <div><h2 className="text-2xl font-bold text-white">{t('grimoire.title')}</h2></div>
+              <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg">
+                <button onClick={() => setTab('artifacts')}
+                  className={`py-2 px-3 rounded-md text-sm font-semibold transition ${tab === 'artifacts' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                  <Sparkles size={14} className="inline mr-1" />{t('grimoire.artifactsTab')}
+                </button>
+                <button onClick={() => setTab('records')}
+                  className={`py-2 px-3 rounded-md text-sm font-semibold transition ${tab === 'records' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
+                  <Trophy size={14} className="inline mr-1" />{t('grimoire.recordsTab')}
+                </button>
               </div>
               <div className="flex items-center gap-2">
                 <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
@@ -547,18 +555,6 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
                 </div>
                 <button onClick={onClose} className="text-slate-400 hover:text-white bg-slate-800 p-2 rounded-lg border border-slate-700"><X size={24} /></button>
               </div>
-            </div>
-
-            {/* Tabs */}
-            <div className="flex-none flex gap-1 mb-4 bg-slate-800 p-1 rounded-lg">
-              <button onClick={() => setTab('artifacts')}
-                className={`flex-1 py-2 rounded-md text-sm font-semibold transition ${tab === 'artifacts' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-                <Sparkles size={14} className="inline mr-1" />{t('grimoire.artifactsTab')}
-              </button>
-              <button onClick={() => setTab('records')}
-                className={`flex-1 py-2 rounded-md text-sm font-semibold transition ${tab === 'records' ? 'bg-slate-700 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
-                <Trophy size={14} className="inline mr-1" />{t('grimoire.recordsTab')}
-              </button>
             </div>
 
             {/* Content —— 矩阵视图由 MatrixView 内部平移；遗物画廊按内容区高度撑满卡片；记录列表在此滚动 */}
@@ -723,7 +719,7 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
 
               {/* ── 正文内容区 ── */}
               {/* 仅此一层纵向滚动，遵循无嵌套滚动条规范 */}
-              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 pb-4">
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4">
                 <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 min-h-[120px]">
 
                   {/* ── 宝物核心视觉：图片居中，文字放在下方 ── */}

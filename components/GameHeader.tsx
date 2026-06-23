@@ -3,7 +3,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bomb } from 'lucide-react';
 import { GameStatus } from '../types';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { PrayingHands } from './PrayingHands';
 
 interface GameHeaderProps {
@@ -93,7 +93,7 @@ export const GameHeader: React.FC<GameHeaderProps> = ({
   const { t } = useTranslation();
 
   return (
-    <div className="relative flex items-center justify-between w-full max-w-2xl mx-auto h-20 bg-slate-900/40 backdrop-blur-md rounded-2xl shadow-xl border border-white/5 px-2 sm:px-4 mb-6">
+    <div className="relative flex items-center justify-between w-full max-w-[392px] sm:max-w-[432px] md:max-w-[512px] mx-auto h-20 bg-slate-900/40 backdrop-blur-md rounded-2xl shadow-xl border border-white/5 px-2 sm:px-4 mb-6">
       
       {/* 1. LEFT: Mine Counter (Threat) */}
       <div className="flex-1 flex justify-start">

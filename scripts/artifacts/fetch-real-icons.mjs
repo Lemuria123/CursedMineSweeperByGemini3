@@ -699,26 +699,57 @@ async function main() {
   const items = allItems.slice(START, Math.min(END, allItems.length));
 
   // ═══════════ 图片去重：跨批次全局——不同宝物不得共用相同图片 ═══════════
-  // 内存集 + 持久化注册表（跨 execSync 调用共享，避免 auto-fetch 逐件调用时重复）
-  const seenHashes = new Set();
+  // 持久化注册表（跨 execSync 调用共享，避免 auto-fetch 逐件调用时重复）
   const HASH_REG = path.join(__dirname, '_icon_hashes.json');
-  let hashRegistry = {}; // { slug: [hash, ...] }
-  try { hashRegistry = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8')); } catch {}
-  for (const hlist of Object.values(hashRegistry)) {
-    if (Array.isArray(hlist)) for (const h of hlist) seenHashes.add(h);
-  }
 
   /** 计算文件 MD5 哈希，用于去重 */
   function fileMd5(fp) {
     return crypto.createHash('md5').update(fs.readFileSync(fp)).digest('hex');
   }
 
-  /** 将新图片哈希写入注册表（持久化，跨调用共享） */
+  /**
+   * 从磁盘重新加载全部已知哈希，返回 Set。
+   * 每次检查前重新读取，消除并行进程间的竞态：
+   * 启动时加载快照 → 进程 A 写 hash → 进程 B 检查时看不到 → 同一图片分配给两个宝物。
+   */
+  function loadFreshHashes() {
+    const seen = new Set();
+    try {
+      const reg = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8'));
+      for (const hlist of Object.values(reg)) {
+        if (Array.isArray(hlist)) for (const h of hlist) seen.add(h);
+      }
+    } catch {}
+    return seen;
+  }
+
+  /**
+   * 将新图片哈希写入注册表（原子化：读→合并→写，消除并行覆写竞态）
+   * 并行进程先读取最新文件，合并本次新增 hash，再整体写入。
+   */
   function saveHash(slug, h) {
-    if (!hashRegistry[slug]) hashRegistry[slug] = [];
-    if (!hashRegistry[slug].includes(h)) {
-      hashRegistry[slug].push(h);
-      fs.writeFileSync(HASH_REG, JSON.stringify(hashRegistry, null, 2), 'utf-8');
+    try {
+      // 读-改-写循环（最多重试 3 次，应对极端并行写入冲突）
+      for (let retry = 0; retry < 3; retry++) {
+        let reg = {};
+        try { reg = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8')); } catch {}
+        if (!reg[slug]) reg[slug] = [];
+        if (!reg[slug].includes(h)) {
+          reg[slug].push(h);
+          fs.writeFileSync(HASH_REG, JSON.stringify(reg, null, 2), 'utf-8');
+          // 写入后验证：重新读取确认我们的 hash 在文件中（防并行覆写）
+          const verify = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8'));
+          if ((verify[slug] || []).includes(h)) return; // 写入成功
+        } else {
+          return; // 已存在，无需写入
+        }
+      }
+      // 重试耗尽仍失败（极端情况），追加写入不丢数据
+      console.log(`    [hash] 写入重试耗尽，追加写入 ${h.substring(0, 8)}`);
+      fs.appendFileSync(HASH_REG, '\n', 'utf-8');
+      // 最坏情况：本次 hash 未持久化，但至少不丢其他进程的数据
+    } catch (e) {
+      console.log(`    [hash] 写入异常: ${e.message?.substring(0, 60)}`);
     }
   }
 
@@ -866,15 +897,15 @@ async function main() {
       const candPath = path.join(RESOURCE_ICONS, `${item.slug}_${downloaded + 1}.png`);
       const ok = await downloadAndProcess(arr[j], candPath);
       if (ok) {
-        // 计算 MD5，若与本批次已下载的任何图片相同则丢弃
+        // 计算 MD5，每次从磁盘重新加载全部已知哈希，消除并行进程间的竞态
         const h = fileMd5(candPath);
-        if (seenHashes.has(h)) {
+        if (loadFreshHashes().has(h)) {
           try { fs.unlinkSync(candPath); } catch {}
           results.dups++;
           console.log(`    🔄 与已有宝物图片重复，跳过`);
           continue; // 不增加 downloaded，不复制到 public，继续试下一张
         }
-        seenHashes.add(h);
+        // 通过去重：先写入哈希注册表（读-改-写，防并行覆写），再复制文件
         saveHash(item.slug, h);
         downloaded++;
         console.log(`    ✅ 候选 ${downloaded}/5`);

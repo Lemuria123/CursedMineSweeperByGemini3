@@ -14,8 +14,6 @@ export interface CellData {
 
 export type GameStatus = 'idle' | 'playing' | 'won' | 'lost';
 
-export type GameMode = 'strict' | 'standard';
-
 export interface Difficulty {
   name: string; // 'Custom' if manually changed
   rows: number;
@@ -32,7 +30,6 @@ export interface GameState {
   isPraying: boolean;
 }
 
-// Replaced GameRecord with RewardRecord
 export type RewardType = 'image' | 'text' | 'glitch';
 
 export interface CursedReward {

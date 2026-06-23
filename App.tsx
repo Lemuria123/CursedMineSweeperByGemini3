@@ -59,16 +59,12 @@ const App: React.FC = () => {
   // 使用 ref 避免回调函数中的闭包陈旧问题
   const prayerRewardThresholdRef = useRef<number>(0);
   const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
-  const [pendingAceReward, setPendingAceReward] = useState<CursedReward | null>(null);
   const [nickname, setNicknameLocal] = useState('');
   const [nicknameError, setNicknameError] = useState('');
-  const [accountNickname, setAccountNickname] = useState<string | null>(null);
 
-  // Register on mount
+  // 启动时注册账号（离线时静默失败，ACE 时会重试）
   useEffect(() => {
-    ensureAccount().then(({ nickname }) => {
-      setAccountNickname(nickname);
-    }).catch(() => {
+    ensureAccount().catch(() => {
       // Offline — will retry on next ACE
     });
 
@@ -88,17 +84,13 @@ const App: React.FC = () => {
   const cspRngRef = useRef<(() => number) | null>(null); // seeded CSP RNG, matches backend
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
-  // Center the board logic
+  // 将棋盘滚动到可视区域中心；同步执行 scrollTo，以便 useLayoutEffect 在绘制前完成居中
   const centerBoard = useCallback(() => {
-    if (scrollContainerRef.current) {
-        const container = scrollContainerRef.current;
-        // Use requestAnimationFrame to ensure layout is complete
-        requestAnimationFrame(() => {
-            const centerX = (container.scrollWidth - container.clientWidth) / 2;
-            const centerY = (container.scrollHeight - container.clientHeight) / 2;
-            container.scrollTo({ left: centerX, top: centerY, behavior: 'auto' });
-        });
-    }
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const centerX = (container.scrollWidth - container.clientWidth) / 2;
+    const centerY = (container.scrollHeight - container.clientHeight) / 2;
+    container.scrollTo({ left: centerX, top: centerY, behavior: 'auto' });
   }, []);
 
   // Initialize Game
@@ -121,8 +113,8 @@ const App: React.FC = () => {
     setTimeout(centerBoard, 50);
   }, [difficulty, centerBoard]);
 
-  // Center on mount and resize
-  useEffect(() => {
+  // 页面挂载和窗口尺寸变化时居中棋盘（使用 useLayoutEffect 在浏览器绘制前同步完成，避免视觉抖动）
+  useLayoutEffect(() => {
     centerBoard();
     window.addEventListener('resize', centerBoard);
     return () => window.removeEventListener('resize', centerBoard);
@@ -265,7 +257,6 @@ const App: React.FC = () => {
           fetchCursedReward(gameState.difficulty).then(async (reward) => {
               saveReward(reward);
               setNewUnlockedReward(reward);
-              setPendingAceReward(reward);
               // 账号已在 submit 流程中 ensureAccount；无昵称时弹出设置引导
               try {
                 const { nickname } = await ensureAccount();
@@ -372,7 +363,6 @@ const App: React.FC = () => {
     try {
       const { accountId } = await ensureAccount();
       await setNickname(accountId, trimmed);
-      setAccountNickname(trimmed);
       setShowNicknamePrompt(false);
       setNicknameLocal('');
       // Record already submitted by the win callback — no duplicate submit needed
@@ -385,13 +375,12 @@ const App: React.FC = () => {
     setShowNicknamePrompt(false);
     setNicknameLocal('');
     setNicknameError('');
-    setPendingAceReward(null);
   };
   return (
     <div className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
       
       {/* Fixed Background Layer - Reverted to Red/Black Cursed Theme */}
-      <div className="absolute inset-0 z-0 pointer-events-none transition-all duration-1000 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/30 via-slate-900 to-black" />
+      <div className="absolute inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/30 via-slate-900 to-black" />
 
       {/* Prayer Overlay */}
       {gameState.isPraying && (
@@ -443,7 +432,7 @@ const App: React.FC = () => {
       {/* Scrollable Game Board Area */}
       <div 
         ref={scrollContainerRef}
-        className="flex-1 overflow-auto custom-scrollbar cursor-grab active:cursor-grabbing relative z-10 w-full"
+        className="flex-1 overflow-auto cursor-grab active:cursor-grabbing relative z-10 w-full"
         onPointerDown={handlePointerDown}
       >
           <div className="min-w-fit min-h-fit p-8 lg:p-12 m-auto w-fit h-fit block">

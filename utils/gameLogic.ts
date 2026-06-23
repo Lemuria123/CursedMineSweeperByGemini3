@@ -1,10 +1,8 @@
 // Frontend wrapper — re-exports from shared/gameLogic and adds React-specific preserveRefs optimization.
 
 export {
-  DIRECTIONS,
   calculateRecommendedMines,
   createEmptyGrid,
-  cloneGrid,
   getNeighbors,
   placeMines,
   getChordTargets,
@@ -43,7 +41,8 @@ export const revealCellLogic = (
   col: number,
   isFirstClick: boolean,
   isPraying: boolean,
+  rng?: () => number,
 ): { grid: CellData[][]; exploded: boolean; prayerConsumed: boolean } => {
-  const result = sharedRevealCellLogic(grid, row, col, isFirstClick, isPraying);
+  const result = sharedRevealCellLogic(grid, row, col, isFirstClick, isPraying, rng);
   return { ...result, grid: preserveRefs(grid, result.grid) };
 };

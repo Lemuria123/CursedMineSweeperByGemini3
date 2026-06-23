@@ -2,7 +2,7 @@
 // Records: first_reveal, reveal (with prayed flag), flag, chord.
 // Produces the game_data payload for POST /api/submit.
 
-export interface RecordedAction {
+interface RecordedAction {
   type: 'first_reveal' | 'reveal' | 'flag' | 'chord';
   row: number;
   col: number;
@@ -10,7 +10,7 @@ export interface RecordedAction {
   prayed?: boolean; // only for reveal
 }
 
-export interface GameDataPayload {
+interface GameDataPayload {
   version: 1;
   nonce: string;
   grid: { rows: number; cols: number; mines: number };

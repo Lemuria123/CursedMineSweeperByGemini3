@@ -23,10 +23,6 @@ export async function register(platform: string, platform_id: string) {
   });
 }
 
-export async function getAccount(id: string) {
-  return request<{ id: string; platform: string; nickname: string | null; created_at: number }>(`/api/auth/${id}`);
-}
-
 export async function setNickname(id: string, nickname: string) {
   return request<{ ok: boolean; nickname: string }>(`/api/auth/${id}/nickname`, {
     method: 'PATCH',
