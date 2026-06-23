@@ -67,7 +67,11 @@
     "artifactFlavor": "这件遗物见证了一个靠逻辑求存的现实。",
     "offline": "离线",
     "minesUnit": "{count} 雷",
-    "recordsCount": "{count} 条记录"
+    "recordsCount": "{count} 条记录",
+    "nextArtifact": "下一章节：{rows}×{cols}",
+    "unlockedAfterAce": "需先 ACE {rows}×{cols}",
+    "endOfReading": "这是最后一章了",
+    "nextArtifactBtn": "下一章"
   },
   "difficulty": {
     "Easy": "简单",

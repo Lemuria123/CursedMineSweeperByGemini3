@@ -4,11 +4,12 @@ import express from 'express';
 import cors from 'cors';
 import { v4 as uuid } from 'uuid';
 
-import { initDatabase, getDb, run, get, all } from './db';
+import { initDatabase, getDb, run, get, all, reloadFromDisk } from './db';
 import { decrypt } from './crypto';
 import { verifySubmission } from './verify';
 import { GameSubmission } from './types';
 import { startAdmin } from './admin';
+import { calculateRecommendedMines } from '../../shared/gameLogic';
 
 const app = express();
 app.use(cors());
@@ -21,6 +22,15 @@ async function start() {
   // ── Health check ──
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true, ts: Date.now() });
+  });
+
+  // 开发环境：外部脚本修改磁盘 DB 后，通知服务端从磁盘重新加载（非 restart）
+  app.post('/api/dev/reload-db', async (_req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(404).json({ error: 'not found' });
+    }
+    await reloadFromDisk();
+    res.json({ ok: true });
   });
 
   // ── POST /api/auth — register or login ──
@@ -147,9 +157,10 @@ async function start() {
     const thresholdValue = get<{ value: string }>('SELECT value FROM config WHERE key = ?', ['prayer_reward_threshold']);
     const prayerThreshold = parseInt(thresholdValue?.value || '0', 10);
 
-    // 有效 + 祈祷次数 <= 阈值 → 发放奖励
+    // 有效 + 祈祷次数 <= 阈值 + 雷数等于默认算法值 → 发放奖励
     let reward: any = null;
-    if (result.valid && submission.prayers_used <= prayerThreshold) {
+    const canonicalMines = calculateRecommendedMines(submission.grid.rows, submission.grid.cols);
+    if (result.valid && submission.prayers_used <= prayerThreshold && submission.grid.mines === canonicalMines) {
       // 奖励 ID 按棋盘尺寸唯一定义：rows-cols（不含 mines，每种尺寸只有 1 个奖品）
       const rewardId = `${submission.grid.rows}-${submission.grid.cols}`;
       // 检查该玩家是否已拥有此尺寸的奖励（按 rows/cols 匹配，兼容旧格式 ID）
@@ -159,8 +170,8 @@ async function start() {
       );
       if (!existingReward) {
         // 从奖品模板表读取该尺寸的奖品定义
-        const template = get<{ name: string; name_en?: string; icon: string; content: string; content_en?: string; type: string; hue: number }>(
-          'SELECT name, name_en, icon, content, content_en, type, hue FROM reward_templates WHERE rows = ? AND cols = ?',
+        const template = get<{ name: string; name_en?: string; icon: string; content: string; content_en?: string; type: string; hue: number; novel_index: number; next_rows: number; next_cols: number; content_kind: string; source_ip: string }>(
+          'SELECT name, name_en, source_ip, icon, content, content_en, type, hue, novel_index, next_rows, next_cols, content_kind FROM reward_templates WHERE rows = ? AND cols = ?',
           [submission.grid.rows, submission.grid.cols],
         );
         reward = {
@@ -168,7 +179,7 @@ async function start() {
           difficulty_name: `${submission.grid.rows}x${submission.grid.cols}`,
           rows: submission.grid.rows,
           cols: submission.grid.cols,
-          mines: submission.grid.mines,
+          mines: canonicalMines,
           title: template?.name || 'ACE',
           name_en: template?.name_en || '',
           icon: template?.icon || '',
@@ -176,12 +187,18 @@ async function start() {
           content_en: template?.content_en || '',
           type: template?.type || 'text',
           hue: template?.hue || 0,
+          novel_index: template?.novel_index ?? -1,
+          next_rows: template?.next_rows ?? 0,
+          next_cols: template?.next_cols ?? 0,
+          content_kind: template?.content_kind || 'item_lore',
+          source_ip: template?.source_ip || '',
         };
         run(
-          'INSERT OR IGNORE INTO rewards (id, account_id, difficulty_name, rows, cols, mines, title, name_en, icon, content, content_en, type, hue, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT OR IGNORE INTO rewards (id, account_id, difficulty_name, rows, cols, mines, title, name_en, icon, content, content_en, type, hue, novel_index, next_rows, next_cols, content_kind, source_ip, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           [
             reward.id, account_id, reward.difficulty_name, reward.rows, reward.cols, reward.mines,
-            reward.title, reward.name_en, reward.icon, reward.content, reward.content_en, reward.type, reward.hue, now,
+            reward.title, reward.name_en, reward.icon, reward.content, reward.content_en, reward.type, reward.hue,
+            reward.novel_index, reward.next_rows, reward.next_cols, reward.content_kind, reward.source_ip, now,
           ],
         );
       }
@@ -258,11 +275,16 @@ async function start() {
       `SELECT r.id, r.difficulty_name, r.rows, r.cols, r.mines,
               COALESCE(t.name, r.title) AS title,
               COALESCE(NULLIF(t.name_en,''), r.name_en) AS name_en,
+              COALESCE(NULLIF(t.source_ip,''), r.source_ip) AS source_ip,
               COALESCE(t.icon, r.icon) AS icon,
               COALESCE(NULLIF(t.content, ''), r.content) AS content,
               COALESCE(NULLIF(t.content_en,''), r.content_en) AS content_en,
               COALESCE(t.type, r.type) AS type,
               COALESCE(t.hue, r.hue) AS hue,
+              COALESCE(t.novel_index, r.novel_index) AS novel_index,
+              COALESCE(t.next_rows, r.next_rows) AS next_rows,
+              COALESCE(t.next_cols, r.next_cols) AS next_cols,
+              COALESCE(NULLIF(t.content_kind,''), r.content_kind) AS content_kind,
               r.submitted_at
        FROM rewards r
        LEFT JOIN reward_templates t ON t.rows = r.rows AND t.cols = r.cols
@@ -270,7 +292,11 @@ async function start() {
        ORDER BY r.submitted_at DESC`,
       [req.params.account_id],
     );
-    res.json(rewards);
+    res.json(rewards.map((r: any) => ({
+      ...r,
+      // 奖励雷数统一为默认算法值，与难度选择器一致
+      mines: calculateRecommendedMines(r.rows, r.cols),
+    })));
   });
 
   // ── Start ──

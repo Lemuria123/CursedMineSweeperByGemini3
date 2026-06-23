@@ -259,8 +259,9 @@ const App: React.FC = () => {
         ).catch(() => {});
       }
 
-      // ACE 奖励：祈祷次数 ≤ 阈值 + 地雷数达到推荐值 + 尚未获得此难度奖励
-      if (newPrayersUsed <= threshold && gameState.difficulty.mines >= calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols) && !hasRewardForDifficulty(gameState.difficulty)) {
+      // ACE 奖励：祈祷次数 ≤ 阈值 + 雷数等于默认算法值 + 尚未获得此难度奖励
+      const canonicalMines = calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols);
+      if (newPrayersUsed <= threshold && gameState.difficulty.mines === canonicalMines && !hasRewardForDifficulty(gameState.difficulty)) {
           fetchCursedReward(gameState.difficulty).then(async (reward) => {
               saveReward(reward);
               setNewUnlockedReward(reward);

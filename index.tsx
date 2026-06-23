@@ -1,5 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+// Tailwind CSS（本地构建，不依赖 CDN）
+import './src/index.css';
 // 在渲染前导入 i18n 配置，确保 i18next 初始化完成
 import './i18n';
 import App from './App';

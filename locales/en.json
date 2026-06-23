@@ -67,7 +67,11 @@
     "artifactFlavor": "This artifact is evidence of a reality where logic dictates survival.",
     "offline": "OFFLINE",
     "minesUnit": "{count} Mines",
-    "recordsCount": "{count} records"
+    "recordsCount": "{count} records",
+    "nextArtifact": "Next Chapter: {rows}×{cols}",
+    "unlockedAfterAce": "Requires ACE {rows}×{cols} first",
+    "endOfReading": "This is the final chapter",
+    "nextArtifactBtn": "Next Chapter"
   },
   "difficulty": {
     "Easy": "Easy",

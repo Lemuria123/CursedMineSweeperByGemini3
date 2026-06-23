@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { X, Book, Lock, Sparkles, Grid3X3, Bomb, LayoutGrid, List, Trophy, Clock, ChevronDown, ChevronUp } from 'lucide-react';
@@ -6,6 +6,7 @@ import { CursedReward, Difficulty } from '../types';
 import { getAllRewards } from '../utils/storage';
 import { getRewards as getRemoteRewards, getMyRecords, getLeaderboard } from '../utils/api';
 import { ensureAccount } from '../utils/auth';
+import { calculateRecommendedMines } from '../utils/gameLogic';
 
 interface GrimoireModalProps {
   isOpen: boolean;
@@ -18,6 +19,39 @@ type Tab = 'artifacts' | 'records';
 const MIN_ROWS = 8, MAX_ROWS = 25;
 const MIN_COLS = 8, MAX_COLS = 25;
 
+/** 矩阵角标列/行宽度（px） */
+const MATRIX_HEADER_SIZE = 40;
+/** 矩阵单元格边长（px） */
+const MATRIX_CELL_SIZE = 32;
+/** 弹窗内边距 p-6 左右合计（px） */
+const MODAL_PADDING_X = 48;
+/** 遮罩层 p-4 左右合计（px） */
+const OUTER_PADDING_X = 32;
+/** 宝物详情页 max-w-md（px），主弹窗宽度不得低于此值 */
+const DETAIL_PANEL_MIN_WIDTH = 448;
+
+/**
+ * 根据矩阵固有尺寸与当前视口，计算法典主弹窗总宽度（px）。
+ * 矩阵内容区宽度 = 角标 + 列数×单元格；再与视口上限、详情页下限取 clamp。
+ * 列表/矩阵切换共用此宽度，避免切换视图时弹窗跳动。
+ */
+const computeGrimoireModalWidth = (): number => {
+  const colsCount = MAX_COLS - MIN_COLS + 1;
+  const matrixContentWidth = MATRIX_HEADER_SIZE + colsCount * MATRIX_CELL_SIZE;
+
+  if (typeof window === 'undefined') {
+    return matrixContentWidth + MODAL_PADDING_X;
+  }
+
+  const viewportCap =
+    window.innerWidth * 0.95 - OUTER_PADDING_X - MODAL_PADDING_X;
+  const contentWidth = Math.max(
+    DETAIL_PANEL_MIN_WIDTH,
+    Math.min(matrixContentWidth, viewportCap)
+  );
+  return contentWidth + MODAL_PADDING_X;
+};
+
 /**
  * 解析奖励 ID，兼容新旧两种格式：
  *   新格式: rows-cols（如 "9-9"）
@@ -28,16 +62,24 @@ const parseId = (id: string) => {
   return { rows: parts[0] || 0, cols: parts[1] || 0, mines: parts[2] || 0 };
 };
 
+/** 奖励记录中的雷数统一为默认算法值（与难度选择器一致） */
+const canonicalRewardMines = (rows: number, cols: number) => calculateRecommendedMines(rows, cols);
+
 // ── Artifact Card ──
 const ArtifactCard: React.FC<{ reward?: CursedReward; fallbackConfig?: Difficulty; onClick?: () => void; unsynced?: boolean }> = ({ reward, fallbackConfig, onClick, unsynced }) => {
   const { t, i18n } = useTranslation();
   const isLocked = !reward;
   const name = reward ? reward.difficultyName : fallbackConfig?.name;
-  let specs = reward ? parseId(reward.id) : (fallbackConfig ? { rows: fallbackConfig.rows, cols: fallbackConfig.cols, mines: fallbackConfig.mines } : { rows: 0, cols: 0, mines: 0 });
+  // 画廊三张卡绑定预设难度：行列与雷数始终与难度选择器一致，不用 reward 里存的当局雷数
+  const specs = fallbackConfig
+    ? { rows: fallbackConfig.rows, cols: fallbackConfig.cols, mines: fallbackConfig.mines }
+    : reward
+      ? { ...parseId(reward.id), mines: canonicalRewardMines(parseId(reward.id).rows, parseId(reward.id).cols) }
+      : { rows: 0, cols: 0, mines: 0 };
 
   return (
     <motion.div whileHover={!isLocked ? { scale: 1.05 } : {}} onClick={!isLocked ? onClick : undefined}
-      className={`relative aspect-[3/4] rounded-xl border-2 overflow-hidden flex flex-col transition-all group ${isLocked ? 'bg-slate-900 border-slate-700 opacity-60 grayscale' : 'bg-slate-800 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)] cursor-pointer'}`}>
+      className={`relative w-full max-h-full aspect-[3/4] rounded-xl border-2 overflow-hidden flex flex-col transition-all group ${isLocked ? 'bg-slate-900 border-slate-700 opacity-60 grayscale' : 'bg-slate-800 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.2)] cursor-pointer'}`}>
       {isLocked ? (
         <div className="flex flex-col items-center justify-center h-full p-4 text-center">
           <div className="mb-3 p-3 rounded-full bg-slate-800 border border-slate-600"><Lock className="text-slate-500" size={24} /></div>
@@ -51,8 +93,15 @@ const ArtifactCard: React.FC<{ reward?: CursedReward; fallbackConfig?: Difficult
         <>
           {/* 使用 layoutId 实现从卡片位置到详情的共享元素过渡动画 */}
           <motion.div layoutId={reward ? `artifact-img-${reward.id}` : undefined} className="w-full h-full relative">
-            {reward.type === 'image' ? <img src={reward.content} alt={reward.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-80 group-hover:opacity-100" /> :
-              <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: `hsla(${reward.hue || 0}, 30%, 10%, 1)` }}><Sparkles color={`hsl(${reward.hue || 0}, 70%, 70%)`} size={32} /></div>}
+            {reward?.type === 'image' ? (
+              <img src={reward.content} alt={reward.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-80 group-hover:opacity-100" />
+            ) : reward?.icon ? (
+              <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: `hsla(${reward.hue || 0}, 30%, 10%, 1)` }}>
+                <img src={reward.icon} alt={reward.title} className="w-12 h-12 object-contain opacity-70 group-hover:opacity-100 transition-opacity" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              </div>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: `hsla(${reward.hue || 0}, 30%, 10%, 1)` }}><Sparkles color={`hsl(${reward.hue || 0}, 70%, 70%)`} size={32} /></div>
+            )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
             <div className="absolute bottom-0 left-0 right-0 p-3">
               <div className="flex justify-between items-end">
@@ -62,8 +111,7 @@ const ArtifactCard: React.FC<{ reward?: CursedReward; fallbackConfig?: Difficult
                   <h3 className="text-amber-100 font-bold text-sm mb-1 leading-tight line-clamp-1">{i18n.language === 'en' && reward.nameEn ? reward.nameEn : reward.title}</h3>
                   <div className="text-[9px] text-slate-400 font-mono flex gap-2">
                     <span>{specs.rows}x{specs.cols}</span>
-                    {/* 优先用 reward.mines 真实雷数，兼容旧本地数据 fallback 到 parseId */}
-                    <span>{t('grimoire.minesUnit', { count: reward.mines || specs.mines })}</span>
+                    <span>{t('grimoire.minesUnit', { count: specs.mines })}</span>
                   </div>
                 </div>
               </div>
@@ -193,25 +241,32 @@ const MatrixView: React.FC<{
                   if (rank === 1) return <span className="text-[18px] leading-none">🥇</span>;
                   if (rank === 2) return <span className="text-[18px] leading-none">🥈</span>;
                   if (rank === 3) return <span className="text-[18px] leading-none">🥉</span>;
-                  if (rank >= 4 && rank <= 99) return <span className="text-[8px] font-mono font-bold text-amber-300 leading-none">#{rank}</span>;
+                  if (rank >= 4 && rank <= 99) return <span className="text-[10px] font-mono font-bold text-amber-300 leading-none">#{rank}</span>;
                   return <span className="text-[7px] font-mono font-bold text-red-400 leading-none">100+</span>;
                 };
                 const badge = getRankBadge();
                 return <div key={`c-${rn}-${cn}`} className="flex items-center justify-center p-[2px] bg-slate-900">
-                  {/* 使用 layoutId 实现从矩阵方块到详情的共享元素过渡动画 */}
-                  <motion.div layoutId={!isRecordsMode && reward ? `artifact-img-${reward.id}` : undefined}
+                  <motion.div
                     onClick={() => {
                     if (isDragging.current) return;
                     if (isRecordsMode && onCellClick) onCellClick(rn, cn);
                     else if (!isRecordsMode && reward) onSelect(reward);
                   }}
-                    className={`w-full h-full rounded-sm transition-all duration-200 flex items-center justify-center
+                    className={`w-full h-full rounded-sm transition-all duration-200 flex items-center justify-center overflow-hidden
                       ${isRecordsMode ? (
                         rank > 0 ? 'bg-amber-900/40 border border-amber-700/50 cursor-pointer hover:scale-110' : 'bg-slate-800/30 border border-slate-700/30'
                       ) : (
-                        reward ? 'bg-amber-500 border border-amber-400 shadow-[0_0_5px_rgba(245,158,11,0.5)] cursor-pointer hover:scale-110' : 'bg-slate-800/30 border border-slate-700/30'
+                        reward ? 'border border-amber-400 shadow-[0_0_3px_rgba(245,158,11,0.4)] cursor-pointer hover:scale-110' : 'bg-slate-800/30 border border-slate-700/30'
                       )}`}>
-                    {!isRecordsMode && reward && <div className="w-full h-full bg-white opacity-0 hover:opacity-20 animate-pulse rounded-sm" />}
+                    {/* 宝物缩略图：矩阵 Artifacts 模式下展示图标，Records 模式下展示排名徽章 */}
+                    {!isRecordsMode && reward ? (
+                      reward.icon ? (
+                        <img src={reward.icon} alt={reward.title} className="w-3/4 h-3/4 object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <div className="w-full h-full bg-amber-500/60" />
+                      )
+                    ) : null}
                     {isRecordsMode && badge && badge}
                   </motion.div>
                 </div>;
@@ -232,6 +287,8 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
   const [remoteRewards, setRemoteRewards] = useState<CursedReward[]>([]);
   const [selectedReward, setSelectedReward] = useState<CursedReward | null>(null);
   const [viewMode, setViewMode] = useState<'gallery' | 'matrix'>('gallery');
+  // 主弹窗宽度：打开时与窗口 resize 时按矩阵视口计算，列表/矩阵共用
+  const [modalWidthPx, setModalWidthPx] = useState(computeGrimoireModalWidth);
 
   // Records state
   const [myRecords, setMyRecords] = useState<any[]>([]);
@@ -253,9 +310,21 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
   // Records 矩阵模式：点击某个棋盘单元格后弹出的排行榜面板
   const [selectedBoard, setSelectedBoard] = useState<{ rows: number; cols: number } | null>(null);
 
+  // 弹窗宽度随视口更新；列表与矩阵视图共用，切换时不改变
+  useEffect(() => {
+    if (!isOpen) return;
+    const updateWidth = () => setModalWidthPx(computeGrimoireModalWidth());
+    updateWidth();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
+  }, [isOpen]);
+
   useEffect(() => {
     if (isOpen) {
-      setLocalRewards(getAllRewards());
+      setLocalRewards(getAllRewards().map(r => {
+        const { rows, cols } = parseId(r.id);
+        return { ...r, mines: canonicalRewardMines(rows, cols) };
+      }));
       setSelectedBoard(null); // 每次打开/切换时关闭旧浮层
       // Fetch remote rewards
       ensureAccount().then(({ accountId }) => {
@@ -270,10 +339,16 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
             content: rw.content,
             type: rw.type,
             hue: rw.hue,
-            mines: rw.mines,
+            mines: canonicalRewardMines(rw.rows, rw.cols),
             // i18n：英文版本的名称与正文，回退到中文
             nameEn: rw.name_en || '',
             contentEn: rw.content_en || '',
+            // v0.4.0 阅读链字段
+            novelIndex: rw.novel_index,
+            nextRows: rw.next_rows,
+            nextCols: rw.next_cols,
+            contentKind: rw.content_kind || 'item_lore',
+            sourceIp: rw.source_ip || '',
           }));
           setRemoteRewards(mapped);
         });
@@ -390,15 +465,45 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
     return () => el.removeEventListener('scroll', handleContentScroll);
   }, [handleContentScroll]);
 
-  if (!isOpen) return null;
-
   // Merge rewards: remote wins for same id, local-only shown with "OFFLINE" badge
-  const remoteIds = new Set(remoteRewards.map(r => r.id));
-  const merged = [...remoteRewards];
-  for (const lr of localRewards) {
-    if (!remoteIds.has(lr.id)) merged.push(lr);
-  }
-  merged.sort((a, b) => b.date - a.date);
+  // 必须在 early return 之前执行，避免 React Hooks 顺序错误
+  const remoteIds = useMemo(() => new Set(remoteRewards.map(r => r.id)), [remoteRewards]);
+  const merged = React.useMemo(() => {
+    const result = [...remoteRewards];
+    for (const lr of localRewards) {
+      if (!remoteIds.has(lr.id)) result.push(lr);
+    }
+    result.sort((a, b) => b.date - a.date);
+    return result;
+  }, [remoteRewards, localRewards, remoteIds]);
+
+  // 预计算详情视图所需的数据
+  // 核心改进：只依赖 selectedReward.id，从 merged 中实时查找最新版本，
+  // 这样当 API 返回完整数据后 merged 更新时，detailData 自动获得后端配置的完整字段
+  const detailData = useMemo(() => {
+    if (!selectedReward) return null;
+    // 始终从 merged 中查找最新数据，而非直接使用 selectedReward 对象
+    const latest = merged.find(r => r.id === selectedReward.id);
+    if (!latest) return null;
+
+    const { nextRows, nextCols } = latest;
+    // 在已收集宝物中查找「下一章节」对应的宝物
+    const nextReward = (nextRows && nextCols)
+      ? merged.find(r => { const s = parseId(r.id); return s.rows === nextRows && s.cols === nextCols; })
+      : null;
+    // 根据当前语言，选择中文/英文显示名称
+    const displayTitle = i18n.language === 'en' && latest.nameEn
+      ? latest.nameEn
+      : latest.title;
+    return {
+      reward: latest,       // 始终使用 merged 中的最新版本（包含后端配置的完整字段）
+      displayTitle,
+      hasNext: !!nextReward,
+      goToNext: () => { if (nextReward) setSelectedReward(nextReward); },
+    };
+  }, [selectedReward, merged, i18n.language]);
+
+  if (!isOpen) return null;
 
   // 计算 Records 模式下每个棋盘尺寸的排名：key="rows-cols", value=排名数
   // 排名从 leaderboard 中查找玩家 account_id 的位置，未进 top100 则标记为 101
@@ -427,7 +532,8 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
       {/* 主列表视图始终存在，不再通过 AnimatePresence 与详情视图交替切换，
           避免列表退出动画 + 详情进入动画的双重动画问题 */}
       <motion.div key="main" initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-            className="relative bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-2xl w-full shadow-2xl max-h-[calc(100vh-2rem)] h-[85vh] flex flex-col overflow-hidden">
+            style={{ width: modalWidthPx }}
+            className="relative bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] h-[85vh] flex flex-col overflow-hidden max-w-[95vw] shrink-0">
             {/* Header */}
             <div className="flex-none flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
@@ -455,32 +561,38 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
               </button>
             </div>
 
-            {/* Content —— 矩阵视图由 MatrixView 内部平移；列表视图在此区域滚动加载（隐藏滚动条，避免内外双层纵向滚动） */}
+            {/* Content —— 矩阵视图由 MatrixView 内部平移；遗物画廊按内容区高度撑满卡片；记录列表在此滚动 */}
             <div
               ref={contentScrollRef}
-              className={`flex-1 min-h-0 pr-1 -mr-1 ${viewMode === 'matrix' ? 'overflow-hidden' : 'overflow-y-auto no-scrollbar overscroll-contain'}`}
+              className={`flex-1 min-h-0 pr-1 -mr-1 ${
+                viewMode === 'matrix' || (tab === 'artifacts' && viewMode === 'gallery')
+                  ? 'overflow-hidden'
+                  : 'overflow-y-auto no-scrollbar overscroll-contain'
+              }`}
             >
               {tab === 'artifacts' ? (
                 viewMode === 'gallery' ? (
-                  <div className="flex items-center justify-center min-h-full">
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 pb-4">
+                  /* 遗物画廊：在固定弹窗宽度内三等分，卡片 w-full + aspect-[3/4]，纵向居中 */
+                  <div className="flex h-full w-full items-center justify-center gap-4 px-2">
                       {difficulties.map((diff) => {
-                        // 查找当前难度对应的已收集奖品
                         const match = merged.find(r => {
                           const { rows, cols } = parseId(r.id);
                           return rows === diff.rows && cols === diff.cols;
                         });
                         return (
-                          <ArtifactCard
+                          <div
                             key={`${diff.rows}-${diff.cols}`}
-                            reward={match}
-                            fallbackConfig={diff}
-                            onClick={match ? () => setSelectedReward(match) : undefined}
-                            unsynced={match ? !remoteIds.has(match.id) && !!remoteRewards.length : false}
-                          />
+                            className="flex h-full min-w-0 flex-1 items-center justify-center"
+                          >
+                            <ArtifactCard
+                              reward={match}
+                              fallbackConfig={diff}
+                              onClick={match ? () => setSelectedReward(match) : undefined}
+                              unsynced={match ? !remoteIds.has(match.id) && !!remoteRewards.length : false}
+                            />
+                          </div>
                         );
                       })}
-                    </div>
                   </div>
                 ) : (
                   <div className="h-full w-full">
@@ -585,39 +697,105 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
             </div>
           </motion.div>
 
-      {/* 详情视图作为覆盖层叠在主列表之上，仅在选中宝物时出现。
-          AnimatePresence 仅控制详情覆盖层的出入动画，主列表保持不动 */}
+      {/* ── 宝物详情视图 ── */}
       <AnimatePresence>
-        {selectedReward && (
+        {selectedReward && detailData && (
           <motion.div key="detail"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 z-10 flex items-center justify-center p-4">
-            <div className="relative bg-slate-900 border border-amber-900/50 rounded-lg max-w-sm w-full shadow-2xl flex flex-col overflow-hidden">
-              <button onClick={() => setSelectedReward(null)} className="absolute top-4 right-4 text-white bg-black/50 p-2 rounded-full hover:bg-black/80 z-20"><X size={20} /></button>
-              <motion.div layoutId={`artifact-img-${selectedReward.id}`} className="w-full aspect-square bg-black relative">
-                {selectedReward.type === 'image' ? <img src={selectedReward.content} className="w-full h-full object-cover" alt="Artifact" /> :
-                  <div className="w-full h-full flex items-center justify-center" style={{ backgroundColor: `hsl(${selectedReward.hue}, 30%, 10%)` }}><Sparkles size={64} color={`hsl(${selectedReward.hue}, 70%, 70%)`} /></div>}
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-transparent to-transparent opacity-80" />
-              </motion.div>
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0, transition: { delay: 0.15 } }}
-                className="p-6 -mt-16 relative z-10">
-                <h2 className="text-2xl font-black text-white mb-1">{i18n.language === 'en' && selectedReward.nameEn ? selectedReward.nameEn : selectedReward.title}</h2>
-                <div className="flex items-center gap-3 text-amber-500 font-mono text-xs mb-6 uppercase tracking-wider">
-                  <span>{selectedReward.id.split('-')[0]}×{selectedReward.id.split('-')[1]}</span>
-                  <span className="w-1 h-1 rounded-full bg-amber-500/50" />
-                  <span>{t('grimoire.minesUnit', { count: selectedReward.mines || 19 })}</span>
-                  <span className="w-1 h-1 rounded-full bg-amber-500/50" />
-                  <span>{new Date(selectedReward.date).toLocaleDateString()}</span>
+            className="absolute inset-0 z-40 flex items-center justify-center p-4">
+            <div className="relative bg-slate-900 border border-amber-900/50 rounded-lg max-w-md w-full shadow-2xl flex flex-col max-h-[90vh] overflow-hidden select-text">
+
+              {/* 关闭按钮 */}
+              <button onClick={() => setSelectedReward(null)}
+                className="absolute top-3 right-3 text-slate-400 hover:text-white bg-black/50 p-2 rounded-full hover:bg-black/80 z-20 transition-colors">
+                <X size={18} />
+              </button>
+
+              {/* ── 标题栏：宝物名称 ── */}
+              <div className="flex-none px-6 pt-5 pb-3">
+                <h2 className="text-lg font-bold text-white leading-tight">
+                  {detailData.displayTitle}
+                </h2>
+              </div>
+
+              {/* ── 正文内容区 ── */}
+              {/* 仅此一层纵向滚动，遵循无嵌套滚动条规范 */}
+              <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 pb-4">
+                <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4 min-h-[120px]">
+
+                  {/* ── 宝物核心视觉：图片居中，文字放在下方 ── */}
+                  {/* type=image：内容图（封面）承载 layoutId 动画 */}
+                  {/* type≠image：200px 图标独立一行 */}
+                  {detailData.reward.type === 'image' && detailData.reward.content ? (
+                    <motion.div layoutId={`artifact-img-${detailData.reward.id}`} className="mb-4">
+                      <img
+                        src={detailData.reward.content}
+                        alt={detailData.reward.title}
+                        className="w-full rounded"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    </motion.div>
+                  ) : (
+                    detailData.reward.icon ? (
+                      <motion.div
+                        layoutId={`artifact-img-${detailData.reward.id}`}
+                        className="mb-4 flex justify-center"
+                      >
+                        <img
+                          src={detailData.reward.icon}
+                          alt={detailData.reward.title}
+                          className="w-[200px] h-auto"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                      </motion.div>
+                    ) : null
+                  )}
+
+                  {/* image 类型在内容图下方展示小图标（封面类型 icon 与 content 重复时跳过） */}
+                  {detailData.reward.type === 'image' && detailData.reward.contentKind !== 'cover' && detailData.reward.icon ? (
+                    <div className="flex justify-center mb-4">
+                      <img
+                        src={detailData.reward.icon}
+                        alt={detailData.reward.title}
+                        className="w-12 h-12 object-contain opacity-50"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                      />
+                    </div>
+                  ) : null}
+
+                  {/* 正文文字：仅 text / glitch 类型，段落首行缩进两字符 */}
+                  {detailData.reward.type === 'text' || detailData.reward.type === 'glitch' ? (
+                    <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line" style={{ textIndent: '2em' }}>
+                      {detailData.reward.content}
+                    </div>
+                  ) : null}
+
                 </div>
-                <div className="bg-slate-800/50 border border-amber-500/10 rounded-xl p-4">
-                  <p className="text-slate-300 italic text-sm">"{t('grimoire.artifactFlavor')}"</p>
+              </div>
+
+              {/* ── 底部导航：下一章提示 + 按钮 ── */}
+              <div className="flex-none px-6 pb-4 pt-2 border-t border-slate-800 flex items-center justify-end gap-2">
+                <div className="text-[11px] text-slate-400">
+                  {detailData.reward.nextRows ? (
+                    <span>ACE {detailData.reward.nextRows}×{detailData.reward.nextCols} 解锁</span>
+                  ) : null}
                 </div>
-              </motion.div>
+                <button
+                  onClick={detailData.goToNext}
+                  disabled={!detailData.hasNext}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition ${
+                    detailData.hasNext
+                      ? 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                      : 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  {t('grimoire.nextArtifactBtn')}
+                </button>
+              </div>
+
             </div>
           </motion.div>
         )}

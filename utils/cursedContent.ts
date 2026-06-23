@@ -1,6 +1,7 @@
 
 import { CursedReward, Difficulty } from '../types';
 import { getRewardTemplates } from './api';
+import { calculateRecommendedMines } from './gameLogic';
 
 // 备用随机标题（模板未配置时使用）
 const FALLBACK_TITLES = [
@@ -35,6 +36,15 @@ export const fetchCursedReward = async (difficulty: Difficulty): Promise<CursedR
         content: template.content,
         type: template.type as 'image' | 'text' | 'glitch',
         hue: template.hue,
+        mines: calculateRecommendedMines(difficulty.rows, difficulty.cols),
+        // v0.4.0 阅读链与多语言字段：从模板中读取，未配置时使用空值
+        nameEn: template.name_en || '',
+        contentEn: template.content_en || '',
+        novelIndex: template.novel_index ?? -1,
+        nextRows: template.next_rows || 0,
+        nextCols: template.next_cols || 0,
+        contentKind: template.content_kind || 'item_lore',
+        sourceIp: template.source_ip || '',
       };
     }
   } catch {
@@ -54,5 +64,13 @@ export const fetchCursedReward = async (difficulty: Difficulty): Promise<CursedR
     content: FALLBACK_IMAGE,
     type: 'image',
     hue: (seed * 137) % 360,
+    mines: calculateRecommendedMines(difficulty.rows, difficulty.cols),
+    nameEn: '',
+    contentEn: '',
+    novelIndex: -1,
+    nextRows: 0,
+    nextCols: 0,
+    contentKind: 'item_lore',
+    sourceIp: '',
   };
 };

@@ -13,3 +13,7 @@ Five canonical labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-f
 ### Domain docs
 
 Single-context layout — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Backend restart
+
+NEVER auto-restart the backend server. Only restart the backend when the user explicitly commands it.

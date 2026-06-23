@@ -32,6 +32,25 @@ function saveDb() {
   fs.writeFileSync(DB_PATH, buffer);
 }
 
+/** 从磁盘重新加载数据库（用于外部进程修改 DB 后同步） */
+export async function reloadDb() {
+  saveDb();
+  db.close();
+  db = await initDb();
+  db.run('PRAGMA foreign_keys = ON');
+  dbInstance = db; // 更新 getDb() 返回的引用
+  console.log('[db] reloaded from disk');
+}
+
+/** 直接从磁盘重新加载 DB（跳过 save，用于外部脚本已直接修改磁盘 DB 的场景） */
+export async function reloadFromDisk() {
+  db.close();
+  db = await initDb();
+  db.run('PRAGMA foreign_keys = ON');
+  dbInstance = db;
+  console.log('[db] reloaded from disk (skip save)');
+}
+
 // ── Initialize ──
 const dbReady = initDb().then((database) => {
   db = database;
@@ -165,6 +184,25 @@ const dbReady = initDb().then((database) => {
   if (!hasRewardsNameEn) db.run('ALTER TABLE rewards ADD COLUMN name_en TEXT NOT NULL DEFAULT \'\'');
   if (!hasRewardsContentEn) db.run('ALTER TABLE rewards ADD COLUMN content_en TEXT NOT NULL DEFAULT \'\'');
 
+  // 迁移 v0.4.0：宝物阅读链字段（下一宝物、小说序号）
+  try { migrateAddColumn('reward_templates', 'novel_index', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
+  try { migrateAddColumn('reward_templates', 'next_rows', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { migrateAddColumn('reward_templates', 'next_cols', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { migrateAddColumn('reward_templates', 'content_kind', "TEXT NOT NULL DEFAULT 'item_lore'"); } catch {}
+  try { migrateAddColumn('rewards', 'novel_index', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
+  try { migrateAddColumn('rewards', 'next_rows', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { migrateAddColumn('rewards', 'next_cols', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { migrateAddColumn('rewards', 'content_kind', "TEXT NOT NULL DEFAULT 'item_lore'"); } catch {}
+
+  // 迁移 v0.4.1：宝物来源游戏字段
+  try { migrateAddColumn('reward_templates', 'source_ip', "TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { migrateAddColumn('rewards', 'source_ip', "TEXT NOT NULL DEFAULT ''"); } catch {}
+
+  // 迁移 v1.3：宝物质量标记（admin 逐个审核）
+  // 值：  ok / name_bad / image_bad  默认空串表示未标记
+  try { migrateAddColumn('reward_templates', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
+  try { migrateAddColumn('rewards', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
+
   saveDb();
   console.log(`[db] connected to ${DB_PATH}`);
 
@@ -264,3 +302,4 @@ export function all<T = any>(sql: string, params?: any[]): T[] {
 }
 
 export { SqlJsDatabase as Database };
+export { saveDb };

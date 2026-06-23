@@ -4,9 +4,13 @@ node_modules/
 # Build output
 dist/
 build/
+server/dist/
 
 # Database files
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 
@@ -45,6 +49,12 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 
+# Test coverage
+coverage/
+
+# Test artifacts
+test_*_output.*
+
 # Generated / downloaded assets (root-level only)
 /Generated Image*
 
@@ -53,6 +63,19 @@ yarn-error.log*
 skills-lock.json
 skills-main/
 skills-main.zip
+
+# Deployment
+.vercel
+.netlify
+
+# Temporary artifact scripts
+scripts/artifacts/_*
+
+# 宝物/封面资源图（本地脚本下载生成，体积大，不入库）
+public/icons/
+public/covers/
+resource/icons/
+resource/covers/
 
 # Misc
 *.pem

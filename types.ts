@@ -40,12 +40,18 @@ export interface CursedReward {
   date: number; // 获得时间戳
   difficultyName: string; // 难度名，如 "Easy"
   title: string; // 奖品标题（模板名或 "ACE"）
-  icon?: string; // emoji / icon identifier from reward template
+  icon?: string; // 图标路径，如 "/icons/wow-thunderfury.png"
   content: string; // URL or Text body
   type: RewardType;
   hue: number; // visual theme color
-  mines?: number; // 本局雷数（服务端返回；本地旧数据可能无此字段）
+  mines?: number; // 默认算法雷数（rows×cols 对应 calculateRecommendedMines）
   // i18n 多语言字段：英文版本的名称与正文（数据库双列方案）
   nameEn?: string;   // 英文名称
   contentEn?: string; // 英文正文
+  // v0.4.0：小说阅读链字段
+  novelIndex?: number;   // 阅读链序号，边缘格为 -1
+  nextRows?: number;     // 阅读链下一宝物所在 rows
+  nextCols?: number;     // 阅读链下一宝物所在 cols
+  contentKind?: string;  // cover / preface / novel / item_lore
+  sourceIp?: string;     // 宝物来源游戏（例如"魔兽世界"）
 }

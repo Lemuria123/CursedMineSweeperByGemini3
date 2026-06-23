@@ -62,7 +62,7 @@ export async function getMyRecords(accountId: string) {
 // ── Rewards ──
 
 export async function getRewards(accountId: string) {
-  return request<{ id: string; difficulty_name: string; rows: number; cols: number; mines: number; title: string; icon?: string; content: string; name_en?: string; content_en?: string; type: string; hue: number; submitted_at: number }[]>(`/api/rewards/${accountId}`);
+  return request<{ id: string; difficulty_name: string; rows: number; cols: number; mines: number; title: string; icon?: string; content: string; name_en?: string; content_en?: string; source_ip?: string; type: string; hue: number; novel_index?: number; next_rows?: number; next_cols?: number; content_kind?: string; submitted_at: number }[]>(`/api/rewards/${accountId}`);
 }
 
 // ── Config ──
@@ -79,5 +79,5 @@ export async function getConfig() {
  * 获取所有奖品模板（用于前端本地匹配棋盘尺寸）
  */
 export async function getRewardTemplates() {
-  return request<{ id: string; rows: number; cols: number; name: string; icon: string; content: string; name_en?: string; content_en?: string; type: string; hue: number }[]>('/api/reward-templates');
+  return request<{ id: string; rows: number; cols: number; name: string; icon: string; content: string; name_en?: string; content_en?: string; type: string; hue: number; novel_index?: number; next_rows?: number; next_cols?: number; content_kind?: string; source_ip?: string }[]>('/api/reward-templates');
 }
