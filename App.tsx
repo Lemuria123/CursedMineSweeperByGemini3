@@ -2,11 +2,9 @@
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Settings, BookOpen } from 'lucide-react';
-import { GameState, Difficulty, GameStatus, CursedReward, CellStatus } from './types';
+import { GameState, Difficulty, GameStatus, CellStatus } from './types';
 import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
 import { createRNG, hashSeed } from './shared/deterministicPlaceMines';
-import { hasRewardForDifficulty, saveReward } from './utils/storage';
-import { fetchCursedReward } from './utils/cursedContent';
 import { Board } from './components/Board';
 import { GameHeader } from './components/GameHeader';
 import { SettingsModal } from './components/SettingsModal';
@@ -16,6 +14,7 @@ import { GameRecorder } from './utils/recorder';
 import { ensureAccount } from './utils/auth';
 import { setNickname, getNonce, submitGame, getConfig } from './utils/api';
 import { encrypt } from './utils/encrypt';
+import { SKIN_STORAGE_KEY, SkinId, isSkinId } from './utils/skins';
 
 // Updated logic: Default mines are now calculated based on the new density formula.
 // Easy: 9x9 (81) -> ~21 mines
@@ -32,6 +31,23 @@ const DRAG_THRESHOLD = 5;
 const App: React.FC = () => {
   const { t } = useTranslation();
   const [difficulty, setDifficulty] = useState<Difficulty>(DIFFICULTIES[0]);
+  // 界面选择写在本地，刷新后还是上次那一套；读失败就用原来的诅咒界面
+  const [skin, setSkin] = useState<SkinId>(() => {
+    try {
+      const saved = localStorage.getItem(SKIN_STORAGE_KEY);
+      return isSkinId(saved) ? saved : 'cursed';
+    } catch {
+      return 'cursed';
+    }
+  });
+  const handleSkinChange = (next: SkinId) => {
+    setSkin(next);
+    try {
+      localStorage.setItem(SKIN_STORAGE_KEY, next);
+    } catch {
+      // 写不进去时，这次打开期间的选择仍然有效
+    }
+  };
   const [showSettings, setShowSettings] = useState(false);
   const [showGrimoire, setShowGrimoire] = useState(false);
   
@@ -47,9 +63,6 @@ const App: React.FC = () => {
   const [isGameOverModalOpen, setIsGameOverModalOpen] = useState(false);
   const [isPrayerFailure, setIsPrayerFailure] = useState(false);
 
-  // New State for Just Unlocked Reward
-  const [newUnlockedReward, setNewUnlockedReward] = useState<CursedReward | null>(null);
-
   // Transient UI state for flashing cells on invalid chord click
   const [highlightedCells, setHighlightedCells] = useState<string[]>([]);
 
@@ -58,12 +71,15 @@ const App: React.FC = () => {
   // 从后端配置读取的祈祷奖励阈值（默认 0 = ACE 模式）
   // 使用 ref 避免回调函数中的闭包陈旧问题
   const prayerRewardThresholdRef = useRef<number>(0);
+  // 胜利后的账号注册和成绩提交是异步的。组件卸载后此标记为 false，避免再打开昵称框。
+  const isMountedRef = useRef(true);
   const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
   const [nickname, setNicknameLocal] = useState('');
   const [nicknameError, setNicknameError] = useState('');
 
   // 启动时注册账号（离线时静默失败，ACE 时会重试）
   useEffect(() => {
+    isMountedRef.current = true;
     ensureAccount().catch(() => {
       // Offline — will retry on next ACE
     });
@@ -75,6 +91,10 @@ const App: React.FC = () => {
     }).catch(() => {
       // 离线或读取失败时维持默认值 0（ACE 模式）
     });
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   // --- Drag to Scroll State ---
@@ -106,7 +126,6 @@ const App: React.FC = () => {
     });
     setIsGameOverModalOpen(false);
     setIsPrayerFailure(false);
-    setNewUnlockedReward(null);
     setHighlightedCells([]);
     
     // Trigger centering after a short delay to allow React to render the new grid size
@@ -242,30 +261,27 @@ const App: React.FC = () => {
       newStatus = 'won';
       newGrid = newGrid.map(r => r.map(c => c.isMine ? { ...c, status: 'flagged' } : c));
       
-      // 根据后端配置的祈祷阈值决定是否提交记录到后端
-      // 只有祈祷次数在阈值范围内才提交（默认 0 = ACE 模式）
+      // 祈祷次数在阈值内才提交成绩（默认 0 = 零祈祷）。不再发放宝物。
+      // 账号还没有昵称时，在这次合格通关后询问排行榜昵称。
       const threshold = prayerRewardThresholdRef.current;
       if (newPrayersUsed <= threshold) {
-        ensureAccount().then(({ accountId }) =>
-          submitToServer(accountId, newPrayersUsed)
-        ).catch(() => {});
-      }
-
-      // ACE 奖励：祈祷次数 ≤ 阈值 + 雷数等于默认算法值 + 尚未获得此难度奖励
-      const canonicalMines = calculateRecommendedMines(gameState.difficulty.rows, gameState.difficulty.cols);
-      if (newPrayersUsed <= threshold && gameState.difficulty.mines === canonicalMines && !hasRewardForDifficulty(gameState.difficulty)) {
-          fetchCursedReward(gameState.difficulty).then(async (reward) => {
-              saveReward(reward);
-              setNewUnlockedReward(reward);
-              // 账号已在 submit 流程中 ensureAccount；无昵称时弹出设置引导
-              try {
-                const { nickname } = await ensureAccount();
-                if (!nickname) {
-                  setNicknameError('');
-                  setShowNicknamePrompt(true);
-                }
-              } catch { /* offline — will retry later */ }
-          });
+        // 棋盘胜负必须在这次点击里同步落下，网络请求不能挡住翻开结果。
+        // 提交放在立即执行的异步函数里：失败写日志，卸载后不再 setState。
+        const prayersUsedForSubmit = newPrayersUsed;
+        void (async () => {
+          try {
+            const { accountId, nickname: existingNickname } = await ensureAccount();
+            await submitToServer(accountId, prayersUsedForSubmit);
+            // 等待期间玩家可能已经离开页面，此时昵称框没有可附着的组件
+            if (!isMountedRef.current) return;
+            if (!existingNickname) {
+              setNicknameError('');
+              setShowNicknamePrompt(true);
+            }
+          } catch (error) {
+            console.error('[ace] 合格通关成绩提交失败:', error);
+          }
+        })();
       }
     }
 
@@ -377,10 +393,10 @@ const App: React.FC = () => {
     setNicknameError('');
   };
   return (
-    <div className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
+    <div data-skin={skin} className="h-screen w-screen bg-slate-900 flex flex-col relative overflow-hidden">
       
       {/* Fixed Background Layer - Reverted to Red/Black Cursed Theme */}
-      <div className="absolute inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/30 via-slate-900 to-black" />
+      <div className="skin-bg absolute inset-0 z-0 pointer-events-none bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-red-900/30 via-slate-900 to-black" />
 
       {/* Prayer Overlay */}
       {gameState.isPraying && (
@@ -390,34 +406,6 @@ const App: React.FC = () => {
       {/* Fixed Header Section */}
       <div className="z-20 w-full flex-none p-4 pb-0 flex flex-col items-center pointer-events-none">
         <div className="pointer-events-auto w-full max-w-2xl">
-             <div className="flex items-center gap-3 mb-4 justify-between">
-                <div className="flex flex-col">
-                    <div className="flex items-center gap-2">
-                         <h1 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text drop-shadow-sm tracking-tight bg-gradient-to-r from-red-500 to-orange-500">
-                           {t('app.title')}
-                        </h1>
-                    </div>
-                </div>
-                
-                <div className="flex gap-2">
-                    <button 
-                        onClick={() => setShowGrimoire(true)}
-                        className="p-2 rounded-full bg-slate-800 text-amber-500 hover:text-amber-300 hover:bg-slate-700 transition-all border border-slate-700 shadow-lg group relative"
-                        title={t('app.grimoireTooltip')}
-                    >
-                        <BookOpen size={20} />
-                    </button>
-
-                    <button 
-                        onClick={() => setShowSettings(true)}
-                        className="p-2 rounded-full bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition-all border border-slate-700 shadow-lg relative"
-                        title={t('app.settingsTooltip')}
-                    >
-                        <Settings size={20} />
-                    </button>
-                </div>
-            </div>
-
             <GameHeader 
             minesLeft={gameState.difficulty.mines - gameState.flagsUsed} 
             status={gameState.status}
@@ -425,7 +413,30 @@ const App: React.FC = () => {
             isPraying={gameState.isPraying}
             onReset={() => initGame()}
             onTogglePrayer={handleTogglePrayer}
-            />
+            >
+              {/* 标题居中。记录、设置钉在左右，不占文档流，也不再套圆形底 */}
+              <div className="relative flex items-center justify-center min-h-10">
+                <button
+                    onClick={() => setShowGrimoire(true)}
+                    className="skin-tool absolute left-0 top-1/2 z-10 -translate-y-1/2 p-1 text-amber-500 hover:text-amber-300 transition-colors"
+                    title={t('app.grimoireTooltip')}
+                >
+                    <BookOpen size={22} />
+                </button>
+
+                <h1 className="skin-title text-xl sm:text-2xl md:text-3xl font-extrabold text-transparent bg-clip-text tracking-tight bg-gradient-to-r from-red-500 to-orange-500 text-center">
+                  {t('app.title')}
+                </h1>
+
+                <button
+                    onClick={() => setShowSettings(true)}
+                    className="skin-tool absolute right-0 top-1/2 z-10 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition-colors"
+                    title={t('app.settingsTooltip')}
+                >
+                    <Settings size={22} />
+                </button>
+              </div>
+            </GameHeader>
         </div>
       </div>
 
@@ -435,7 +446,8 @@ const App: React.FC = () => {
         className="flex-1 overflow-auto cursor-grab active:cursor-grabbing relative z-10 w-full"
         onPointerDown={handlePointerDown}
       >
-          <div className="min-w-fit min-h-fit p-8 lg:p-12 m-auto w-fit h-fit block">
+          {/* 顶部不再留白。滚到最上时棋盘就贴着顶栏，不会再多出一截空档 */}
+          <div className="min-w-fit min-h-fit px-8 pb-8 lg:px-12 lg:pb-12 m-auto w-fit h-fit block">
             <Board 
                 grid={gameState.grid} 
                 gameStatus={gameState.status}
@@ -450,7 +462,6 @@ const App: React.FC = () => {
           <Modal 
             status={gameState.status} 
             prayersUsed={gameState.prayersUsed}
-            newReward={newUnlockedReward}
             isPrayerFailure={isPrayerFailure}
             onRestart={() => initGame()} 
             onClose={() => setIsGameOverModalOpen(false)}
@@ -463,6 +474,8 @@ const App: React.FC = () => {
         currentDifficulty={difficulty}
         onDifficultyChange={handleDifficultyChange}
         difficulties={DIFFICULTIES}
+        skin={skin}
+        onSkinChange={handleSkinChange}
       />
 
       <GrimoireModal

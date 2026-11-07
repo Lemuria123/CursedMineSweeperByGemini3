@@ -14,9 +14,6 @@ async function main() {
   console.log('\n=== accounts schema ===');
   console.log(all('PRAGMA table_info(accounts)'));
 
-  console.log('\n=== rewards schema ===');
-  console.log(all('PRAGMA table_info(rewards)'));
-
   console.log('\n=== records schema ===');
   console.log(all('PRAGMA table_info(records)'));
 

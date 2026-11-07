@@ -1,5 +1,5 @@
 # 本地用 Docker 管这套开发进程。
-# 宿主机已占用 5173 / 8080 / 8081，前端改到 5174。
+# 宿主机已占用 5173 / 8080 / 8081，前端用 38000。
 # 38001、38002 当前空闲，继续用它们：前端 utils/api.ts 写死了 http://localhost:38001。
 # 加密密钥与 start-dev-server.bat 里的本地开发密钥相同，并传给 Vite，保证提交成绩能解密。
 
@@ -37,7 +37,7 @@ services:
       dockerfile: Dockerfile
       target: web
     ports:
-      - "5174:5174"
+      - "38000:38000"
     environment:
       # 与 server 的 ENCRYPTION_KEY 保持同一把本地开发密钥
       VITE_ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}

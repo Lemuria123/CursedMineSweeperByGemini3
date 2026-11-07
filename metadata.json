@@ -1,6 +1,6 @@
 {
   "name": "Cursed Minesweeper",
-  "description": "A minesweeper where guessing is death. Only prayer can save you.",
+  "description": "A minesweeper where guessing is death. Only prayer saves you.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

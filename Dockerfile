@@ -19,8 +19,8 @@ ENTRYPOINT ["node", "/usr/local/bin/cms-server-entrypoint.mjs"]
 FROM node:22-bookworm-slim AS web
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY docker/web-entrypoint.mjs /usr/local/bin/cms-web-entrypoint.mjs
 RUN npm ci
+COPY docker/web-entrypoint.mjs /usr/local/bin/cms-web-entrypoint.mjs
 COPY . .
-EXPOSE 5174
+EXPOSE 38000
 ENTRYPOINT ["node", "/usr/local/bin/cms-web-entrypoint.mjs"]

@@ -149,7 +149,8 @@ async function main() {
       }
       const sd = await subRes.json() as any;
       r.valid = sd.valid === true; r.reason = sd.reason || sd.error || null; r.reward = sd.reward?.title || null;
-      r.passed = (!r.valid && !r.reward); r.timeMs = Date.now() - start;
+      // 伪造对局必须被拒绝。响应里不应再带宝物。
+      r.passed = !r.valid && !('reward' in sd); r.timeMs = Date.now() - start;
     } catch (e: any) { r.error = e.message; }
     results.push(r);
     console.log(` ${r.passed ? '✅' : '❌'} ${r.valid ? 'ACCEPTED(BUG!)' : 'REJECTED'} | ${r.timeMs}ms`);

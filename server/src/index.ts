@@ -9,8 +9,6 @@ import { decrypt } from './crypto';
 import { verifySubmission } from './verify';
 import { GameSubmission } from './types';
 import { startAdmin } from './admin';
-import { calculateRecommendedMines } from '../../shared/gameLogic';
-
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -153,61 +151,10 @@ async function start() {
       ],
     );
 
-    // 6. 从配置表读取祈祷奖励阈值（默认 0：零祈祷 = ACE）
-    const thresholdValue = get<{ value: string }>('SELECT value FROM config WHERE key = ?', ['prayer_reward_threshold']);
-    const prayerThreshold = parseInt(thresholdValue?.value || '0', 10);
-
-    // 有效 + 祈祷次数 <= 阈值 + 雷数等于默认算法值 → 发放奖励
-    let reward: any = null;
-    const canonicalMines = calculateRecommendedMines(submission.grid.rows, submission.grid.cols);
-    if (result.valid && submission.prayers_used <= prayerThreshold && submission.grid.mines === canonicalMines) {
-      // 奖励 ID 按棋盘尺寸唯一定义：rows-cols（不含 mines，每种尺寸只有 1 个奖品）
-      const rewardId = `${submission.grid.rows}-${submission.grid.cols}`;
-      // 检查该玩家是否已拥有此尺寸的奖励（按 rows/cols 匹配，兼容旧格式 ID）
-      const existingReward = get(
-        'SELECT id FROM rewards WHERE rows = ? AND cols = ? AND account_id = ?',
-        [submission.grid.rows, submission.grid.cols, account_id],
-      );
-      if (!existingReward) {
-        // 从奖品模板表读取该尺寸的奖品定义
-        const template = get<{ name: string; name_en?: string; icon: string; content: string; content_en?: string; type: string; hue: number; novel_index: number; next_rows: number; next_cols: number; content_kind: string; source_ip: string }>(
-          'SELECT name, name_en, source_ip, icon, content, content_en, type, hue, novel_index, next_rows, next_cols, content_kind FROM reward_templates WHERE rows = ? AND cols = ?',
-          [submission.grid.rows, submission.grid.cols],
-        );
-        reward = {
-          id: rewardId,
-          difficulty_name: `${submission.grid.rows}x${submission.grid.cols}`,
-          rows: submission.grid.rows,
-          cols: submission.grid.cols,
-          mines: canonicalMines,
-          title: template?.name || 'ACE',
-          name_en: template?.name_en || '',
-          icon: template?.icon || '',
-          content: template?.content || '',
-          content_en: template?.content_en || '',
-          type: template?.type || 'text',
-          hue: template?.hue || 0,
-          novel_index: template?.novel_index ?? -1,
-          next_rows: template?.next_rows ?? 0,
-          next_cols: template?.next_cols ?? 0,
-          content_kind: template?.content_kind || 'item_lore',
-          source_ip: template?.source_ip || '',
-        };
-        run(
-          'INSERT OR IGNORE INTO rewards (id, account_id, difficulty_name, rows, cols, mines, title, name_en, icon, content, content_en, type, hue, novel_index, next_rows, next_cols, content_kind, source_ip, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [
-            reward.id, account_id, reward.difficulty_name, reward.rows, reward.cols, reward.mines,
-            reward.title, reward.name_en, reward.icon, reward.content, reward.content_en, reward.type, reward.hue,
-            reward.novel_index, reward.next_rows, reward.next_cols, reward.content_kind, reward.source_ip, now,
-          ],
-        );
-      }
-    }
-
+    // 校验结果写入 records。祈祷阈值由前端决定是否提交，这里不再发放宝物。
     res.json({
       valid: result.valid,
       reason: result.reason || null,
-      reward: reward ? { id: reward.id, title: reward.title } : null,
     });
   });
 
@@ -260,43 +207,6 @@ async function start() {
     const result: Record<string, string> = {};
     configs.forEach(c => { result[c.key] = c.value; });
     res.json(result);
-  });
-
-  // ── GET /api/reward-templates — 获取所有奖品模板（前端读取） ──
-  app.get('/api/reward-templates', (_req, res) => {
-    const templates = all('SELECT * FROM reward_templates ORDER BY rows, cols');
-    res.json(templates);
-  });
-
-  // ── GET /api/rewards/:account_id — player rewards ──
-  // 通过 LEFT JOIN reward_templates 实时读取模板名称，管理后台改动即时生效于所有历史奖励
-  app.get('/api/rewards/:account_id', (req, res) => {
-    const rewards = all(
-      `SELECT r.id, r.difficulty_name, r.rows, r.cols, r.mines,
-              COALESCE(t.name, r.title) AS title,
-              COALESCE(NULLIF(t.name_en,''), r.name_en) AS name_en,
-              COALESCE(NULLIF(t.source_ip,''), r.source_ip) AS source_ip,
-              COALESCE(t.icon, r.icon) AS icon,
-              COALESCE(NULLIF(t.content, ''), r.content) AS content,
-              COALESCE(NULLIF(t.content_en,''), r.content_en) AS content_en,
-              COALESCE(t.type, r.type) AS type,
-              COALESCE(t.hue, r.hue) AS hue,
-              COALESCE(t.novel_index, r.novel_index) AS novel_index,
-              COALESCE(t.next_rows, r.next_rows) AS next_rows,
-              COALESCE(t.next_cols, r.next_cols) AS next_cols,
-              COALESCE(NULLIF(t.content_kind,''), r.content_kind) AS content_kind,
-              r.submitted_at
-       FROM rewards r
-       LEFT JOIN reward_templates t ON t.rows = r.rows AND t.cols = r.cols
-       WHERE r.account_id = ?
-       ORDER BY r.submitted_at DESC`,
-      [req.params.account_id],
-    );
-    res.json(rewards.map((r: any) => ({
-      ...r,
-      // 奖励雷数统一为默认算法值，与难度选择器一致
-      mines: calculateRecommendedMines(r.rows, r.cols),
-    })));
   });
 
   // ── Start ──

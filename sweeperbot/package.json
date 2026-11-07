@@ -1,0 +1,21 @@
+{
+  "name": "sweeperbot",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "独立运行的 ACE 扫雷机器人：截图认盘、只点必然安全格、终局或卡住后重开并记录。",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "tsx --test src/solver/deduce.test.ts src/vision/classify.test.ts src/vision/digits.test.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.49.1",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pngjs": "^6.0.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

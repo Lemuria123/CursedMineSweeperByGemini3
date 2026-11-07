@@ -12,14 +12,15 @@ export default {
         sans: ['Nunito', 'sans-serif'],
       },
       colors: {
+        /* 格子颜色走 CSS 变量，换界面时只改变量，格子组件不用改判断 */
         grass: {
-          light: '#4ade80',
-          dark: '#22c55e',
-          shadow: '#15803d',
+          light: 'var(--grass-light)',
+          dark: 'var(--grass-dark)',
+          shadow: 'var(--grass-shadow)',
         },
         dirt: {
-          light: '#e7cba9',
-          dark: '#dbb484',
+          light: 'var(--dirt-light)',
+          dark: 'var(--dirt-dark)',
         },
       },
     },

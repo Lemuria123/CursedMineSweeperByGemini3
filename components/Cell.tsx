@@ -41,17 +41,23 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
   let contentClass = '';
   let numberClass = '';
   
+  // 皮肤只通过这些钩子改颜色，不改这一格是盖住、翻开还是地雷
+  let skinHook = 'cell-hidden';
+
   if (status === 'revealed') {
     if (isMine) {
       bgClass = isExploded ? 'bg-red-500' : 'bg-red-400';
       borderClass = 'border-none';
+      skinHook = isExploded ? 'cell-mine cell-exploded' : 'cell-mine';
     } else {
       // Dirt (Revealed) - Flat look
       bgClass = isEven ? 'bg-dirt-light' : 'bg-dirt-dark';
+      skinHook = 'cell-open';
     }
   } else {
     // Hidden or Flagged (Grass) - 3D Button look
     bgClass = isEven ? 'bg-grass-light' : 'bg-grass-dark';
+    skinHook = 'cell-hidden';
     
     // UI FEEDBACK: If highlighted, simulate the "pressed" state (flat, no border-b, shifted down)
     if (isHighlighted) {
@@ -121,8 +127,8 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
         {/* Main Cell Body */}
         <div className={`
             w-full h-full flex items-center justify-center
-            text-lg font-bold cursor-pointer rounded-md
-            ${bgClass} ${borderClass} ${contentClass}
+            cell-body text-lg font-bold cursor-pointer rounded-md
+            ${skinHook} ${bgClass} ${borderClass} ${contentClass}
         `}>
           <AnimatePresence>
             {isExploded && <ExplosionEffect />}
@@ -133,7 +139,8 @@ export const Cell: React.FC<CellProps> = React.memo(({ data, onClick, onRightCli
             <motion.span
               initial={{ scale: 0.5, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className={`${NUMBER_COLORS[neighborMines]} drop-shadow-sm`}
+              data-n={neighborMines}
+              className={`cell-num ${NUMBER_COLORS[neighborMines]} drop-shadow-sm`}
             >
               {neighborMines}
             </motion.span>

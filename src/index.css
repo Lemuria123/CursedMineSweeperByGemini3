@@ -32,3 +32,546 @@
 * {
   -webkit-tap-highlight-color: transparent;
 }
+
+/*
+ * 四套界面。
+ * cursed 的变量等于原来的草地/泥土色，不另写覆盖，所以默认外观不变。
+ * abyss / neon / stone 改背景、标题、顶栏图标色、棋盘和格子。顶栏本身不画卡片。
+ * 数字色只覆盖深色翻开格（深渊、街机）；古庙翻开是浅沙，沿用原来的深色数字。
+ */
+:root,
+[data-skin="cursed"] {
+  --grass-light: #4ade80;
+  --grass-dark: #22c55e;
+  --grass-shadow: #15803d;
+  --dirt-light: #e7cba9;
+  --dirt-dark: #dbb484;
+}
+
+[data-skin="abyss"] {
+  --grass-light: #3b2463;
+  --grass-dark: #301c56;
+  --grass-shadow: #14081f;
+  --dirt-light: #5c4034;
+  --dirt-dark: #4e362c;
+}
+
+[data-skin="neon"] {
+  /* 未翻开比页面底亮一档，翻开再暗回去，整屏不要沉成近黑 */
+  --grass-light: #24507a;
+  --grass-dark: #1d446c;
+  --grass-shadow: #0e7490;
+  --dirt-light: #16324f;
+  --dirt-dark: #122a44;
+}
+
+[data-skin="stone"] {
+  --grass-light: #d4bc96;
+  --grass-dark: #c4a67a;
+  --grass-shadow: #7c6548;
+  --dirt-light: #f6ead4;
+  --dirt-dark: #efe0c6;
+}
+
+/* ---------- 页面背景、标题、顶栏 ---------- */
+/* 页面底色比棋盘更沉，格子才是前景。诅咒沿用原来的红黑渐变，不在这里覆盖。 */
+[data-skin="abyss"] .skin-bg {
+  background-color: #07050c;
+  background-image: radial-gradient(circle at 50% 0%, #1a0c2e 0%, #0c0814 42%, #07050c 100%);
+}
+[data-skin="neon"] .skin-bg {
+  background-color: #03060c;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at 50% 0%, #071018, #03060c 70%);
+  background-size: 28px 28px, 28px 28px, auto;
+}
+[data-skin="stone"] .skin-bg {
+  background-color: #120e0a;
+  background-image: radial-gradient(circle at 50% 30%, #2a2118 0%, #120e0a 72%);
+}
+
+[data-skin="abyss"] .skin-title {
+  background-image: linear-gradient(90deg, #e879f9, #fb7185);
+}
+[data-skin="neon"] .skin-title {
+  background-image: linear-gradient(90deg, #22d3ee, #e879f9);
+}
+[data-skin="stone"] .skin-title {
+  background-image: linear-gradient(90deg, #f6d48a, #c4a15a);
+}
+
+/* 记录和设置只是图标，皮肤只改颜色 */
+[data-skin="abyss"] .skin-tool { color: #e9d5ff; }
+[data-skin="neon"] .skin-tool { color: #67e8f9; }
+[data-skin="stone"] .skin-tool { color: #e7c27a; }
+
+/* 雷数不再有底和边，皮肤只改炸弹和数字的颜色 */
+[data-skin="abyss"] .skin-mine { color: #fca5a5; }
+[data-skin="neon"] .skin-mine { color: #fb7185; }
+[data-skin="stone"] .skin-mine { color: #f0a8a0; }
+[data-skin="abyss"] .skin-mine-count,
+[data-skin="neon"] .skin-mine-count,
+[data-skin="stone"] .skin-mine-count {
+  color: inherit;
+}
+/* 雷图标跟着计数器的代表色走，不再固定成红色圆底 */
+[data-skin="abyss"] .skin-mine-icon,
+[data-skin="neon"] .skin-mine-icon,
+[data-skin="stone"] .skin-mine-icon {
+  color: inherit;
+  background-color: transparent;
+  box-shadow: none;
+}
+
+/*
+ * 中心脸的绘制色。变量写在按钮上，三种表情一起跟着当前界面走。
+ * 诅咒不改数值：待机仍是冷灰盘 + 靛色五官，胜利仍是黄，失败血迹仍是红。
+ * 深渊用紫、街机用青、古庙用暖沙，和各自标题、外框同一套色。
+ */
+.skin-face {
+  --face-fill: #1e293b;
+  --face-ring: #64748b;
+  --face-ink: #e0e7ff;
+  --face-eye: #0f172a;
+  --face-bag: #6366f1;
+  --face-sweat: #a5b4fc;
+  --face-won: #facc15;
+  --face-won-glow: rgba(250, 204, 21, 0.6);
+  --face-spark: #fef08a;
+  --face-lost-fill: #334155;
+  --face-lost-ink: #94a3b8;
+  --face-blood: #ef4444;
+}
+.skin-face .face-ring {
+  fill: var(--face-fill);
+  stroke: var(--face-ring);
+}
+.skin-face .face-eye {
+  fill: var(--face-eye);
+  stroke: var(--face-ink);
+}
+.skin-face .face-bag {
+  fill: none;
+  stroke: var(--face-bag);
+}
+.skin-face .face-mouth {
+  fill: none;
+  stroke: var(--face-ink);
+}
+.skin-face .face-sweat {
+  fill: var(--face-sweat);
+}
+.skin-face .face-won {
+  color: var(--face-won);
+  filter: drop-shadow(0 0 8px var(--face-won-glow));
+}
+.skin-face .face-spark {
+  fill: var(--face-spark);
+}
+.skin-face .face-lost {
+  color: var(--face-lost-ink);
+}
+.skin-face .face-lost-disc {
+  fill: var(--face-lost-fill);
+  stroke: currentColor;
+}
+.skin-face .face-blood {
+  fill: none;
+  stroke: var(--face-blood);
+}
+
+[data-skin="abyss"] .skin-face {
+  background-color: #1e1b4b;
+  background-image: linear-gradient(#4c1d95, #1e1b4b);
+  border-color: #6d28d9;
+  box-shadow: 0 8px 0 #12081c;
+  --face-fill: #160c28;
+  --face-ring: #c4b5fd;
+  --face-ink: #ddd6fe;
+  --face-eye: #0c0618;
+  --face-bag: #d8b4fe;
+  --face-sweat: #e9d5ff;
+  --face-won: #e9d5ff;
+  --face-won-glow: rgba(216, 180, 254, 0.6);
+  --face-spark: #f5d0fe;
+  --face-lost-fill: #241433;
+  --face-lost-ink: #ddd6fe;
+  --face-blood: #fca5a5;
+}
+[data-skin="neon"] .skin-face {
+  background-color: #1a5278;
+  background-image: none;
+  border-color: #22d3ee;
+  box-shadow: 0 6px 0 #0c3a56, 0 0 16px rgba(34, 211, 238, 0.35);
+  --face-fill: #071624;
+  --face-ring: #67e8f9;
+  --face-ink: #a5f3fc;
+  --face-eye: #041018;
+  --face-bag: #22d3ee;
+  --face-sweat: #cffafe;
+  --face-won: #a5f3fc;
+  --face-won-glow: rgba(34, 211, 238, 0.55);
+  --face-spark: #ecfeff;
+  --face-lost-fill: #0a1c2e;
+  --face-lost-ink: #a5f3fc;
+  --face-blood: #fb7185;
+}
+[data-skin="stone"] .skin-face {
+  background-color: #4a3f32;
+  background-image: linear-gradient(#6d5c46, #4a3f32);
+  border-color: #8a7352;
+  box-shadow: 0 8px 0 #241c14;
+  --face-fill: #2a2118;
+  --face-ring: #e7c27a;
+  --face-ink: #f3e6c8;
+  --face-eye: #1a140e;
+  --face-bag: #d4b483;
+  --face-sweat: #f6d48a;
+  --face-won: #f6d48a;
+  --face-won-glow: rgba(246, 212, 138, 0.55);
+  --face-spark: #fef3c7;
+  --face-lost-fill: #3a2c20;
+  --face-lost-ink: #f3e6c8;
+  --face-blood: #f0a8a0;
+}
+[data-skin="abyss"] .skin-face:active,
+[data-skin="neon"] .skin-face:active,
+[data-skin="stone"] .skin-face:active {
+  box-shadow: none;
+}
+
+[data-skin="abyss"] .skin-prayer-count { color: #fcd34d; }
+[data-skin="neon"] .skin-prayer-count { color: #fbbf24; }
+[data-skin="stone"] .skin-prayer-count { color: #f6d48a; }
+
+/* ---------- 棋盘与格子 ---------- */
+[data-skin="abyss"] .skin-board {
+  background-color: #14081f;
+  border-color: #3b0764;
+}
+[data-skin="neon"] .skin-board {
+  background-color: #123552;
+  border-color: rgba(34, 211, 238, 0.55);
+}
+[data-skin="stone"] .skin-board {
+  background-color: #5c4632;
+  border-color: #3a3024;
+}
+
+/* 未翻开的石砖加一道斜面高光，和翻开的浅沙分开 */
+[data-skin="stone"] .cell-body.cell-hidden {
+  background-image: linear-gradient(155deg, rgba(255, 255, 255, 0.55), transparent 46%, rgba(90, 60, 30, 0.22));
+}
+
+[data-skin="abyss"] .cell-mine:not(.cell-exploded) { background-color: #4c1d95; }
+[data-skin="abyss"] .cell-mine:not(.cell-exploded) svg { color: #fae8ff; }
+[data-skin="neon"] .cell-mine:not(.cell-exploded) { background-color: #3b0764; }
+[data-skin="neon"] .cell-mine:not(.cell-exploded) svg { color: #f0abfc; }
+[data-skin="stone"] .cell-mine:not(.cell-exploded) { background-color: #6b4f3a; }
+
+[data-skin="abyss"] .cell-num[data-n="1"] { color: #7dd3fc; }
+[data-skin="abyss"] .cell-num[data-n="2"] { color: #86efac; }
+[data-skin="abyss"] .cell-num[data-n="3"] { color: #fda4af; }
+[data-skin="abyss"] .cell-num[data-n="4"] { color: #d8b4fe; }
+[data-skin="abyss"] .cell-num[data-n="5"] { color: #fdba74; }
+[data-skin="abyss"] .cell-num[data-n="6"] { color: #67e8f9; }
+[data-skin="abyss"] .cell-num[data-n="7"] { color: #fef3c7; }
+[data-skin="abyss"] .cell-num[data-n="8"] { color: #f5d0fe; }
+
+[data-skin="neon"] .cell-num[data-n="1"] { color: #22d3ee; }
+[data-skin="neon"] .cell-num[data-n="2"] { color: #4ade80; }
+[data-skin="neon"] .cell-num[data-n="3"] { color: #fb7185; }
+[data-skin="neon"] .cell-num[data-n="4"] { color: #c4b5fd; }
+[data-skin="neon"] .cell-num[data-n="5"] { color: #fbbf24; }
+[data-skin="neon"] .cell-num[data-n="6"] { color: #2dd4bf; }
+[data-skin="neon"] .cell-num[data-n="7"] { color: #f8fafc; }
+[data-skin="neon"] .cell-num[data-n="8"] { color: #94a3b8; }
+
+/*
+ * 设置页：四团小魂火落在骷髅自己的圆圈上，上下左右各一个。
+ * 不画额外的圆，占位仍是原来那颗骷髅，避免把难度和开始按钮挤出弹窗。
+ * 当前这套不透明，并带一点同色光；其余半透明。
+ */
+.skin-picker {
+  position: relative;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+.skin-soul {
+  position: absolute;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: center;
+  opacity: 0.45;
+  line-height: 0;
+}
+.skin-soul svg {
+  width: 10px;
+  height: 13px;
+  display: block;
+}
+/* 火苗尖朝外，贴着圆圈，而不是四团朝同一个方向 */
+.skin-soul-down svg { transform: rotate(180deg); }
+.skin-soul-left svg { transform: rotate(-90deg); }
+.skin-soul-right svg { transform: rotate(90deg); }
+/* 中心压在圆圈边上，而不是离骷髅一截 */
+.skin-soul-up { top: 0; left: 50%; transform: translate(-50%, -50%); }
+.skin-soul-down { bottom: 0; left: 50%; transform: translate(-50%, 50%); }
+.skin-soul-left { left: 0; top: 50%; transform: translate(-50%, -50%); }
+.skin-soul-right { right: 0; top: 50%; transform: translate(50%, -50%); }
+.skin-soul.is-active {
+  opacity: 1;
+}
+.skin-soul.is-active svg {
+  filter: drop-shadow(0 0 3px currentColor);
+}
+/*
+ * 设置页分两层，避免底色和前景糊在一起。
+ * 弹窗本身是该界面的底：比棋盘、比输入框都更沉。
+ * 输入框、语言条、行数面板是前景，明显亮一档。
+ * 诅咒不覆盖，底仍是石板灰，前景仍是原来的深灰控件，和绿色格子分开。
+ */
+[data-skin="abyss"] .skin-settings {
+  background-color: #100818;
+  border-color: #5b21b6;
+}
+[data-skin="neon"] .skin-settings {
+  background-color: #070c14;
+  border-color: #0e7490;
+}
+[data-skin="stone"] .skin-settings {
+  background-color: #1c1610;
+  border-color: #8a6a3e;
+}
+
+/* 前景：输入框和加减按钮 */
+[data-skin="abyss"] .skin-settings .bg-slate-800 { background-color: #3c2760; }
+[data-skin="abyss"] .skin-settings .bg-slate-800\/80 { background-color: rgba(60, 39, 96, 0.92); }
+[data-skin="abyss"] .skin-settings .bg-slate-800\/50 { background-color: rgba(60, 39, 96, 0.55); }
+[data-skin="neon"] .skin-settings .bg-slate-800 { background-color: #1f6484; }
+[data-skin="neon"] .skin-settings .bg-slate-800\/80 { background-color: rgba(31, 100, 132, 0.92); }
+[data-skin="neon"] .skin-settings .bg-slate-800\/50 { background-color: rgba(31, 100, 132, 0.55); }
+[data-skin="stone"] .skin-settings .bg-slate-800 { background-color: #6b5340; }
+[data-skin="stone"] .skin-settings .bg-slate-800\/80 { background-color: rgba(107, 83, 64, 0.92); }
+[data-skin="stone"] .skin-settings .bg-slate-800\/50 { background-color: rgba(107, 83, 64, 0.55); }
+
+/* 前景里再凹进去的一块：难度条和行列区域 */
+[data-skin="abyss"] .skin-settings .bg-slate-900\/50 { background-color: #241433; }
+[data-skin="neon"] .skin-settings .bg-slate-900\/50 { background-color: #164868; }
+[data-skin="stone"] .skin-settings .bg-slate-900\/50 { background-color: #3a2c20; }
+
+[data-skin="abyss"] .skin-settings .bg-slate-700,
+[data-skin="abyss"] .skin-settings .hover\:bg-slate-700:hover { background-color: #53358a; }
+[data-skin="neon"] .skin-settings .bg-slate-700,
+[data-skin="neon"] .skin-settings .hover\:bg-slate-700:hover { background-color: #2a86a8; }
+[data-skin="stone"] .skin-settings .bg-slate-700,
+[data-skin="stone"] .skin-settings .hover\:bg-slate-700:hover { background-color: #8a6a48; }
+
+[data-skin="abyss"] .skin-settings .active\:bg-slate-950:active { background-color: #160c22; }
+[data-skin="neon"] .skin-settings .active\:bg-slate-950:active { background-color: #0e3a54; }
+[data-skin="stone"] .skin-settings .active\:bg-slate-950:active { background-color: #2a2016; }
+
+[data-skin="abyss"] .skin-settings .border-slate-600,
+[data-skin="abyss"] .skin-settings .border-slate-700 { border-color: #6d28d9; }
+[data-skin="neon"] .skin-settings .border-slate-600,
+[data-skin="neon"] .skin-settings .border-slate-700 { border-color: #0e7490; }
+[data-skin="stone"] .skin-settings .border-slate-600,
+[data-skin="stone"] .skin-settings .border-slate-700 { border-color: #a68456; }
+
+/*
+ * 设置页里两枚实心底按钮，底色和字色都跟着界面走。
+ * 选中（语言、当前难度）用这套界面的魂火色当底。
+ * 字不用纯白：亮底配同色系的深墨，深底才用浅字。这样方块标记（currentColor）也会一起变。
+ * 确认（开始、保存昵称）用第二种颜色，和选中分开，避免整页只剩一个色。
+ * 语言按钮的 emerald / amber 类写在按钮自己身上，所以 color 直接打在这两个类上，盖过 text-white。
+ * 难度的绿底在按钮里面那一层，字色在外层按钮上，要用 :has 单独写。
+ * 没选中的字和图标离开石板灰，改成该界面的浅色；诅咒的控件本来就是石板，灰字留着。
+ */
+[data-skin="cursed"] .skin-settings .bg-emerald-600 {
+  background-color: #22c55e;
+  color: #052e16;
+}
+[data-skin="cursed"] .skin-settings button:has(.bg-emerald-600) {
+  color: #052e16;
+}
+[data-skin="cursed"] .skin-settings .bg-amber-600 {
+  background-color: #f59e0b;
+  color: #1c1408;
+  box-shadow: 0 8px 16px rgba(120, 53, 15, 0.28);
+}
+[data-skin="cursed"] .skin-settings .hover\:bg-amber-500:hover {
+  background-color: #fbbf24;
+}
+
+[data-skin="abyss"] .skin-settings .bg-emerald-600 {
+  background-color: #c084fc;
+  color: #2e1065;
+}
+[data-skin="abyss"] .skin-settings button:has(.bg-emerald-600) {
+  color: #2e1065;
+}
+[data-skin="abyss"] .skin-settings .bg-amber-600 {
+  background-color: #fb7185;
+  color: #3f0d16;
+  box-shadow: 0 8px 16px rgba(136, 19, 55, 0.28);
+}
+[data-skin="abyss"] .skin-settings .hover\:bg-amber-500:hover {
+  background-color: #fda4af;
+}
+[data-skin="abyss"] .skin-settings button.text-slate-300,
+[data-skin="abyss"] .skin-settings button.text-slate-400,
+[data-skin="abyss"] .skin-settings button.text-slate-500 {
+  color: #d8b4fe;
+}
+[data-skin="abyss"] .skin-settings button.hover\:text-white:hover,
+[data-skin="abyss"] .skin-settings button.hover\:text-slate-200:hover,
+[data-skin="abyss"] .skin-settings button.hover\:text-slate-300:hover {
+  color: #faf5ff;
+}
+[data-skin="abyss"] .skin-settings button.text-amber-500 { color: #e9d5ff; }
+[data-skin="abyss"] .skin-settings button.hover\:text-amber-400:hover { color: #f5f3ff; }
+
+[data-skin="neon"] .skin-settings .bg-emerald-600 {
+  background-color: #22d3ee;
+  color: #042f3a;
+}
+[data-skin="neon"] .skin-settings button:has(.bg-emerald-600) {
+  color: #042f3a;
+}
+[data-skin="neon"] .skin-settings .bg-amber-600 {
+  background-color: #e879f9;
+  color: #2e1065;
+  box-shadow: 0 8px 16px rgba(112, 26, 117, 0.32);
+}
+[data-skin="neon"] .skin-settings .hover\:bg-amber-500:hover {
+  background-color: #f0abfc;
+}
+[data-skin="neon"] .skin-settings button.text-slate-300,
+[data-skin="neon"] .skin-settings button.text-slate-400,
+[data-skin="neon"] .skin-settings button.text-slate-500 {
+  color: #a5f3fc;
+}
+[data-skin="neon"] .skin-settings button.hover\:text-white:hover,
+[data-skin="neon"] .skin-settings button.hover\:text-slate-200:hover,
+[data-skin="neon"] .skin-settings button.hover\:text-slate-300:hover {
+  color: #ecfeff;
+}
+[data-skin="neon"] .skin-settings button.text-amber-500 { color: #67e8f9; }
+[data-skin="neon"] .skin-settings button.hover\:text-amber-400:hover { color: #cffafe; }
+
+[data-skin="stone"] .skin-settings .bg-emerald-600 {
+  background-color: #e7c27a;
+  color: #2a1c10;
+}
+[data-skin="stone"] .skin-settings button:has(.bg-emerald-600) {
+  color: #2a1c10;
+}
+[data-skin="stone"] .skin-settings .bg-amber-600 {
+  background-color: #b4533a;
+  color: #fff7ed;
+  box-shadow: 0 8px 16px rgba(92, 32, 20, 0.32);
+}
+[data-skin="stone"] .skin-settings .hover\:bg-amber-500:hover {
+  background-color: #c4654c;
+}
+[data-skin="stone"] .skin-settings button.text-slate-300,
+[data-skin="stone"] .skin-settings button.text-slate-400,
+[data-skin="stone"] .skin-settings button.text-slate-500 {
+  color: #e6d3b4;
+}
+[data-skin="stone"] .skin-settings button.hover\:text-white:hover,
+[data-skin="stone"] .skin-settings button.hover\:text-slate-200:hover,
+[data-skin="stone"] .skin-settings button.hover\:text-slate-300:hover {
+  color: #fff8ee;
+}
+[data-skin="stone"] .skin-settings button.text-amber-500 { color: #f0d59a; }
+[data-skin="stone"] .skin-settings button.hover\:text-amber-400:hover { color: #fff4d6; }
+
+.skin-soul[data-skin-choice="cursed"] { color: #22c55e; }
+.skin-soul[data-skin-choice="abyss"] { color: #c084fc; }
+.skin-soul[data-skin-choice="neon"] { color: #22d3ee; }
+.skin-soul[data-skin-choice="stone"] { color: #e7c27a; }
+
+/*
+ * 设置页里选中难度后的棋盘预览。
+ * 对局格子是 w-9 / sm:w-10 / md:w-12，也就是 36 / 40 / 48px。
+ * 这里的长宽取它的 1/4：9 / 10 / 12px。底边原来是 4px，同样缩成 1px，
+ * 否则 9px 的小格会被边框占掉一半。圆角 6px 缩成 1.5px。
+ * 棋盘外框的 p-3（12px）和 border-4（4px）也按 1/4，变成 3px 和 1px。
+ * 列数写在 data-cols 上，组件里不用内联样式。
+ */
+.diff-preview-frame {
+  width: max-content;
+  margin-inline: auto;
+  padding: 3px;
+  border: 1px solid #14532d;
+  border-radius: 4px;
+}
+/*
+ * 左右按钮按困难棋盘（16 列 × 25 行）的外沿对齐。
+ * 简单、中等比它小，格子在这块区域里居中，按钮不再往中间靠。
+ * 拖得比困难更大时，区域跟着变大，按钮才向外让。
+ * 外框是 padding 3px×2 加边框 1px×2，格缝 1px。
+ */
+.diff-preview-slot {
+  --diff-cell: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: calc(16 * var(--diff-cell) + 15px + 8px);
+  min-height: calc(25 * var(--diff-cell) + 24px + 8px);
+}
+.diff-preview {
+  --diff-cols: 9;
+  display: grid;
+  width: max-content;
+  /* 对局格子外包了一层 1px 留白，缩到 1/4 后不到 1px。留 1px 缝，小格才不会糊成一块 */
+  gap: 1px;
+  grid-template-columns: repeat(var(--diff-cols), var(--diff-cell));
+}
+.diff-preview-cell {
+  width: var(--diff-cell);
+  height: var(--diff-cell);
+  border-bottom: 1px solid var(--grass-shadow);
+  border-radius: 1.5px;
+  box-sizing: border-box;
+}
+/* 雷标跟着格子走，大约占格子的七成。小格只有 9 到 12px，固定像素会挤出格子 */
+.diff-preview-mine {
+  width: 70%;
+  height: 70%;
+  color: #991b1b;
+}
+@media (min-width: 640px) {
+  .diff-preview-slot { --diff-cell: 10px; }
+}
+@media (min-width: 768px) {
+  .diff-preview-slot { --diff-cell: 12px; }
+}
+.diff-preview[data-cols="8"] { --diff-cols: 8; }
+.diff-preview[data-cols="9"] { --diff-cols: 9; }
+.diff-preview[data-cols="10"] { --diff-cols: 10; }
+.diff-preview[data-cols="11"] { --diff-cols: 11; }
+.diff-preview[data-cols="12"] { --diff-cols: 12; }
+.diff-preview[data-cols="13"] { --diff-cols: 13; }
+.diff-preview[data-cols="14"] { --diff-cols: 14; }
+.diff-preview[data-cols="15"] { --diff-cols: 15; }
+.diff-preview[data-cols="16"] { --diff-cols: 16; }
+.diff-preview[data-cols="17"] { --diff-cols: 17; }
+.diff-preview[data-cols="18"] { --diff-cols: 18; }
+.diff-preview[data-cols="19"] { --diff-cols: 19; }
+.diff-preview[data-cols="20"] { --diff-cols: 20; }
+.diff-preview[data-cols="21"] { --diff-cols: 21; }
+.diff-preview[data-cols="22"] { --diff-cols: 22; }
+.diff-preview[data-cols="23"] { --diff-cols: 23; }
+.diff-preview[data-cols="24"] { --diff-cols: 24; }
+.diff-preview[data-cols="25"] { --diff-cols: 25; }

@@ -127,8 +127,8 @@ async function main() {
     if (result.valid) pass('Valid game accepted');
     else fail('Valid game', `rejected: ${result.reason}`);
 
-    if (result.status === 200 && result.body.reward === null) pass('No ACE reward (prayers > 0)');
-    else fail('Reward logic', `reward should be null, got ${JSON.stringify(result.body.reward)}`);
+    if (result.status === 200 && !('reward' in result.body)) pass('Submit does not return a reward');
+    else fail('Reward field', `response should not include reward, got ${JSON.stringify(result.body.reward)}`);
   }
 
   // ═══ NEGATIVE TESTS ═══

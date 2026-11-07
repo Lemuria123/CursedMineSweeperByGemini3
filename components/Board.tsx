@@ -16,7 +16,7 @@ export const Board: React.FC<BoardProps> = ({ grid, gameStatus, onCellClick, onC
 
   return (
     <div 
-      className="bg-[#14532d] p-3 rounded-lg shadow-2xl border-4 border-[#14532d]"
+      className="skin-board bg-[#14532d] p-3 rounded-lg shadow-2xl border-4 border-[#14532d]"
       style={{
         display: 'grid',
         gridTemplateColumns: `repeat(${cols}, max-content)`, 

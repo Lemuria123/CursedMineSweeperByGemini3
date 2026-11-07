@@ -1,0 +1,16 @@
+# 扫雷机器人用的前端快照。
+# 不挂载仓库：镜像构建时 COPY 进去的代码不会跟着本机修改变。
+# 只映射 38100，不占用正在跑的 38000 / 38001 / 5173。
+
+name: sweeperbot-sandbox
+
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: web
+    image: sweeperbot-sandbox-web
+    ports:
+      - "38100:38000"
+    restart: "no"

@@ -136,7 +136,7 @@ async function main() {
   // Verify
   if ((result as any).valid) {
     console.log('\n=== E2E SUBMIT TEST PASSED ===');
-    console.log(`Reward: ${(result as any).reward ? (result as any).reward.title : '(prayers > 0, not ACE)'}`);
+    console.log(`Reward field present: ${'reward' in (result as any)}`);
 
     // Also check records
     const recordsRes = await fetch(`${SERVER}/api/records/me/${accountId}`);

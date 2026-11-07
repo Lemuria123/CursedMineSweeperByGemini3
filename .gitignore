@@ -79,5 +79,8 @@ public/covers/
 resource/icons/
 resource/covers/
 
+# sweeperbot 对局截图与记录（体积大，不入库）
+sweeperbot/logs/
+
 # Misc
 *.pem

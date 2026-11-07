@@ -70,32 +70,10 @@ const dbReady = initDb().then((database) => {
     )
   `);
 
-  // 奖励记录表（服务器权威数据，持久化保存，重启不会丢失）
-  db.run(`
-    CREATE TABLE IF NOT EXISTS rewards (
-      id              TEXT NOT NULL,
-      account_id      TEXT NOT NULL REFERENCES accounts(id),
-      difficulty_name TEXT NOT NULL,
-      rows            INTEGER NOT NULL,
-      cols            INTEGER NOT NULL,
-      mines           INTEGER NOT NULL,
-      title           TEXT NOT NULL,
-      name_en         TEXT NOT NULL DEFAULT '',
-      content         TEXT NOT NULL,
-      content_en      TEXT NOT NULL DEFAULT '',
-      type            TEXT NOT NULL,
-      hue             INTEGER NOT NULL,
-      submitted_at    INTEGER NOT NULL,
-      PRIMARY KEY (id, account_id)
-    )
-  `);
-
   // Migration: add prayers_used column if missing (v0.2.2)
   try { migrateAddColumn('records', 'prayers_used', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
   // Migration: add verify_reason column if missing (v0.2.3)
   try { migrateAddColumn('records', 'verify_reason', "TEXT DEFAULT NULL"); } catch {}
-  // Migration: add icon column to rewards (v0.3.0 — reward templates)
-  try { migrateAddColumn('rewards', 'icon', "TEXT NOT NULL DEFAULT ''"); } catch {}
 
   function migrateAddColumn(table: string, col: string, def: string) {
     const cols = db.exec(`PRAGMA table_info(${table})`);
@@ -138,8 +116,7 @@ const dbReady = initDb().then((database) => {
   db.run('CREATE INDEX IF NOT EXISTS idx_nonces_expires ON submission_nonces(expires_at)');
 
   // ── 配置表（key-value 键值对） ──
-  // 存储可动态调整的服务器配置项
-  // 默认配置：祈祷奖励阈值为 0（即必须零祈祷才能获得 ACE 奖励）
+  // 祈祷阈值只控制「多少次祈祷以内的通关才提交成绩」，默认 0（零祈祷才记入排行榜）
   db.run(`
     CREATE TABLE IF NOT EXISTS config (
       key   TEXT PRIMARY KEY,
@@ -148,64 +125,9 @@ const dbReady = initDb().then((database) => {
   `);
   db.run(`INSERT OR IGNORE INTO config (key, value) VALUES ('prayer_reward_threshold', '0')`);
 
-  // ── 奖品模板表 ──
-  // 每种棋盘尺寸可以配置一个奖品模板（名称、图标、文字、类型、色调）
-  // 玩家达成条件后，从此表读取奖品信息写入 rewards 表
-  db.run(`
-    CREATE TABLE IF NOT EXISTS reward_templates (
-      id         TEXT PRIMARY KEY,
-      rows       INTEGER NOT NULL,
-      cols       INTEGER NOT NULL,
-      name       TEXT NOT NULL DEFAULT '',
-      name_en    TEXT NOT NULL DEFAULT '',
-      icon       TEXT NOT NULL DEFAULT '',
-      content    TEXT NOT NULL DEFAULT '',
-      content_en TEXT NOT NULL DEFAULT '',
-      type       TEXT NOT NULL DEFAULT 'text',
-      hue        INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(rows, cols)
-    )
-  `);
-
-  // 迁移：为已有 reward_templates 表添加 i18n 列（name_en、content_en）
-  // PRAGMA table_info 兼容已有数据库；若列不存在则添加
-  const templateCols = db.exec('PRAGMA table_info(reward_templates)');
-  const templateColNames = templateCols.length > 0 ? templateCols[0].values.map((v: any[]) => v[1]) : [];
-  const hasNameEn = templateColNames.includes('name_en');
-  const hasContentEn = templateColNames.includes('content_en');
-  if (!hasNameEn) db.run('ALTER TABLE reward_templates ADD COLUMN name_en TEXT NOT NULL DEFAULT \'\'');
-  if (!hasContentEn) db.run('ALTER TABLE reward_templates ADD COLUMN content_en TEXT NOT NULL DEFAULT \'\'');
-
-  // 迁移：为已有 rewards 表添加 i18n 列（name_en、content_en）
-  const rewardsCols = db.exec('PRAGMA table_info(rewards)');
-  const rewardsColNames = rewardsCols.length > 0 ? rewardsCols[0].values.map((v: any[]) => v[1]) : [];
-  const hasRewardsNameEn = rewardsColNames.includes('name_en');
-  const hasRewardsContentEn = rewardsColNames.includes('content_en');
-  if (!hasRewardsNameEn) db.run('ALTER TABLE rewards ADD COLUMN name_en TEXT NOT NULL DEFAULT \'\'');
-  if (!hasRewardsContentEn) db.run('ALTER TABLE rewards ADD COLUMN content_en TEXT NOT NULL DEFAULT \'\'');
-
-  // 迁移 v0.4.0：宝物阅读链字段（下一宝物、小说序号）
-  try { migrateAddColumn('reward_templates', 'novel_index', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
-  try { migrateAddColumn('reward_templates', 'next_rows', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
-  try { migrateAddColumn('reward_templates', 'next_cols', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
-  try { migrateAddColumn('reward_templates', 'content_kind', "TEXT NOT NULL DEFAULT 'item_lore'"); } catch {}
-  try { migrateAddColumn('rewards', 'novel_index', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
-  try { migrateAddColumn('rewards', 'next_rows', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
-  try { migrateAddColumn('rewards', 'next_cols', 'INTEGER NOT NULL DEFAULT 0'); } catch {}
-  try { migrateAddColumn('rewards', 'content_kind', "TEXT NOT NULL DEFAULT 'item_lore'"); } catch {}
-
-  // 迁移 v0.4.1：宝物来源游戏字段
-  try { migrateAddColumn('reward_templates', 'source_ip', "TEXT NOT NULL DEFAULT ''"); } catch {}
-  try { migrateAddColumn('rewards', 'source_ip', "TEXT NOT NULL DEFAULT ''"); } catch {}
-
-  // 迁移 v1.3：宝物质量标记（admin 逐个审核）
-  // 值：  ok / name_bad / image_bad  默认空串表示未标记
-  try { migrateAddColumn('reward_templates', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
-  try { migrateAddColumn('rewards', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
-
-  // 迁移 v2.0：宝物图标候选 URL 列表（JSON 数组，每项 {url,source,w,h}）
-  // 补图不再下载处理，改为只收集链接存入此字段，Admin 面板预览后用户决定下载哪个
-  try { migrateAddColumn('reward_templates', 'image_candidates', "TEXT NOT NULL DEFAULT ''"); } catch {}
+  // 宝物收集已移除。旧库里的两张表直接丢掉，账号、对局、随机数和配置保留。
+  db.run('DROP TABLE IF EXISTS rewards');
+  db.run('DROP TABLE IF EXISTS reward_templates');
 
   saveDb();
   console.log(`[db] connected to ${DB_PATH}`);

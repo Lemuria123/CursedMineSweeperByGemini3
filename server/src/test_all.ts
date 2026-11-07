@@ -60,7 +60,7 @@ console.log('\n═══ 7.2 Server Modules ═══');
   await initDatabase();
   const tables = all("SELECT name FROM sqlite_master WHERE type='table'");
   const names = tables.map((t: any) => t.name);
-  ['accounts', 'records', 'rewards', 'submission_nonces'].forEach(t => {
+  ['accounts', 'records', 'submission_nonces', 'config'].forEach(t => {
     names.includes(t) ? ok(`DB table: ${t}`) : no(`DB table: ${t}`, 'missing');
   });
 
@@ -156,9 +156,6 @@ console.log('\n═══ 7.2 Server Modules ═══');
   const myRecs = await fetch(`${API}/api/records/me/${accountId}`);
   (myRecs.ok) ? ok('GET records/me') : no('records/me', `${myRecs.status}`);
 
-  const rews = await fetch(`${API}/api/rewards/${accountId}`);
-  (rews.ok) ? ok('GET rewards') : no('rewards', `${rews.status}`);
-
   // ═══ 7.4 Admin Panel ═══
   console.log('\n═══ 7.4 Admin Panel ═══');
   try {
@@ -179,7 +176,7 @@ console.log('\n═══ 7.2 Server Modules ═══');
     return { status: r.status, body: await r.text() };
   }
 
-  for (const [path, label] of [['/dashboard','Dashboard'],['/users','Users'],['/records','Records'],['/rewards','Rewards'],['/submissions','Submissions']] as const) {
+  for (const [path, label] of [['/dashboard','Dashboard'],['/users','Users'],['/records','Records'],['/submissions','Submissions']] as const) {
     const r = await aGet(path);
     (r.status === 200) ? ok(`admin ${label} (${path})`) : no(`admin ${label}`, `${r.status}`);
   }

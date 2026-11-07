@@ -6,8 +6,8 @@
     "saveFailed": "Save failed. Please check your network and try again."
   },
   "app": {
-    "title": "CURSED MINES",
-    "grimoireTooltip": "Grimoire (Collection)",
+    "title": "CURSED MINE SWEEPER",
+    "grimoireTooltip": "Records",
     "settingsTooltip": "Settings",
     "aceComplete": "ACE Complete!",
     "enterNickname": "Enter a nickname for the leaderboard.",
@@ -16,32 +16,39 @@
     "nicknameEmpty": "Nickname cannot be empty"
   },
   "settings": {
-    "noNickname": "No nickname set",
-    "setNickname": "Set",
+    "setNickname": "Set Your Name",
     "editNickname": "Edit",
     "cursedTitle": "YOU ARE <1>CURSED</1>",
     "ruleBlindGuess": "Blind guessing is punished.",
     "ruleMine": "If a cell <1>can</1> be a mine, it <3>is</3> a mine.",
-    "rulePrayer": "Only prayer can save you.",
+    "rulePrayer": "Only prayer saves you.",
     "selectDifficulty": "Select Difficulty",
     "rows": "Rows",
     "cols": "Cols",
     "curseDensity": "Curse Density {pct}%",
     "mines": "{count} Mines",
+    "fewerMines": "Fewer mines",
+    "moreMines": "More mines",
+    "resizeBoard": "Drag to resize the board",
     "startNewGame": "Start New Game",
     "rowsError": "Rows must be between {min} and {max}",
     "colsError": "Columns must be between {min} and {max}",
     "language": "Language",
     "langZh": "中",
-    "langEn": "EN"
+    "langEn": "EN",
+    "skinGroup": "Interface",
+    "skins": {
+      "cursed": "Cursed",
+      "abyss": "Abyss",
+      "neon": "Arcade",
+      "stone": "Temple"
+    }
   },
   "game": {
     "resetGame": "Reset Game",
     "togglePrayer": "Toggle Prayer Mode"
   },
   "modal": {
-    "cursedArtifact": "Cursed Artifact",
-    "artifactDesc": "Artifact retrieved from the void.",
     "pureVictory": "Pure Victory!",
     "youWon": "You Won!",
     "gameOver": "Game Over!",
@@ -49,29 +56,19 @@
     "clearedWithPrayers": "Sector cleared using {count} prayers.",
     "prayerFailure": "Not even prayer can save you from the inevitable.",
     "curseClaims": "The curse claims another soul.",
-    "collectAndContinue": "Collect & Continue",
     "playAgain": "Play Again",
     "viewBoard": "View Board"
   },
   "grimoire": {
-    "title": "Grimoire",
-    "artifactsTab": "Artifacts",
+    "title": "Records",
     "recordsTab": "Records",
     "loading": "Loading…",
     "yourBest": "Your Best",
     "noRecord": "No personal record yet",
     "noLeaderboard": "No leaderboard data yet",
     "scrollMore": "Scroll to load more ({remaining} remaining)",
-    "artifactsFooter": "Collect artifacts by achieving ACED victories",
     "recordsFooter": "Times verified & anti-cheat protected",
-    "artifactFlavor": "This artifact is evidence of a reality where logic dictates survival.",
-    "offline": "OFFLINE",
-    "minesUnit": "{count} Mines",
-    "recordsCount": "{count} records",
-    "nextArtifact": "Next Chapter: {rows}×{cols}",
-    "unlockedAfterAce": "Requires ACE {rows}×{cols} first",
-    "endOfReading": "This is the final chapter",
-    "nextArtifactBtn": "Next Chapter"
+    "recordsCount": "{count} records"
   },
   "difficulty": {
     "Easy": "Easy",
