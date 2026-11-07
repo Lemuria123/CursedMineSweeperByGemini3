@@ -203,6 +203,10 @@ const dbReady = initDb().then((database) => {
   try { migrateAddColumn('reward_templates', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
   try { migrateAddColumn('rewards', 'quality_status', "TEXT NOT NULL DEFAULT ''"); } catch {}
 
+  // 迁移 v2.0：宝物图标候选 URL 列表（JSON 数组，每项 {url,source,w,h}）
+  // 补图不再下载处理，改为只收集链接存入此字段，Admin 面板预览后用户决定下载哪个
+  try { migrateAddColumn('reward_templates', 'image_candidates', "TEXT NOT NULL DEFAULT ''"); } catch {}
+
   saveDb();
   console.log(`[db] connected to ${DB_PATH}`);
 

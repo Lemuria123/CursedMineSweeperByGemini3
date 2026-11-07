@@ -85,8 +85,7 @@ app.post('/login', (req, res) => {
 app.get('/logout', (req, res) => { req.session = null; res.redirect('/'); });
 
 // ── 自动处理状态（每20秒后台自动运行）──
-let autoFetch = false;
-let autoRefix = false;
+let autoUnified = false;  // 统一自动处理开关：name_bad → 重找+补图, image_bad → 补图
 let autoTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Dashboard ──
@@ -836,7 +835,7 @@ app.post('/config', requireAdmin, (req, res) => {
 
 // GET: 显示所有奖品模板列表 + 新增/编辑表单
 app.get('/reward-config', requireAdmin, (req, res) => {
-  const templates = all<{ id: string; rows: number; cols: number; name: string; name_en: string; source_ip: string; icon: string; content: string; content_en: string; type: string; hue: number; novel_index: number; next_rows: number; next_cols: number; content_kind: string; quality_status: string }>(
+  const templates = all<{ id: string; rows: number; cols: number; name: string; name_en: string; source_ip: string; icon: string; content: string; content_en: string; type: string; hue: number; novel_index: number; next_rows: number; next_cols: number; content_kind: string; quality_status: string; image_candidates: string }>(
     // 最近更新（updated_at 非空）排最前，其次未验收排前，再按棋盘大小倒序
     `SELECT * FROM reward_templates ORDER BY (CASE WHEN updated_at != '' THEN 0 ELSE 1 END), updated_at DESC, (CASE WHEN quality_status NOT LIKE '%ok%' THEN 0 ELSE 1 END), rows DESC, cols DESC`);
   const editId = (req.query.edit as string) || '';
@@ -881,26 +880,52 @@ app.get('/reward-config', requireAdmin, (req, res) => {
           <input type="radio" name="qs_${t.id}" value="ok" ${isOk ? 'checked' : ''} onchange="toggleQuality('${t.id}', 'ok', this)" class="cursor-pointer" /> 验收通过
         </label>
       </div>`;
-    // 候选图：检查 public/icons 下是否存在 {slug}_2.png ~ {slug}_5.png
-    const iconSlug = t.icon ? (t.icon.match(/\/icons\/(.+)\.png$/)?.[1] || '') : '';
+    // 候选图：v3.0 从 image_candidates JSON 字段读取（不再检查本地文件）
+    // 当 icon 为空或格式不规范时，用 rows×cols 生成 fallback slug（保证候选图能正常显示）
+    let iconSlug = t.icon ? (t.icon.match(/\/icons\/(.+)\.png$/)?.[1] || '') : '';
+    if (!iconSlug && t.image_candidates) {
+      iconSlug = `item-${t.rows}-${t.cols}`;
+    }
     let candidateHTML = '';
-    if (iconSlug) {
-      const candidates = [];
-      for (let k = 1; k <= 5; k++) {
-        const candPath = path.join(__dirname, '..', '..', 'public', 'icons', `${iconSlug}_${k}.png`);
-        if (fs.existsSync(candPath)) {
-          const candUrl = `/icons/${iconSlug}_${k}.png`;
-          const isActive = k === 1; // 第 1 张 = 当前默认图标
-          candidates.push(`<img src="${escAttr(candUrl)}" data-index="${k}" data-slug="${escAttr(iconSlug)}"
-            loading="lazy" width="80" height="80"
-            class="w-[80px] h-[80px] object-cover rounded border-2 cursor-pointer hover:border-purple-400 transition-colors ${isActive ? 'border-green-400 shadow-green-500/30 shadow' : 'border-gray-600 opacity-70 hover:opacity-100'}"
-            onerror="this.style.display='none'"
-            onclick="event.stopPropagation();selectCandidate('${escAttr(iconSlug)}', ${k}, this)" />`);
+    if (iconSlug && t.image_candidates) {
+      try {
+        const imgCands = JSON.parse(t.image_candidates);
+        if (Array.isArray(imgCands) && imgCands.length > 0) {
+          const items = [];
+          for (let k = 0; k < Math.min(imgCands.length, 10); k++) {
+            const c = imgCands[k];
+            const srcLabel = c.source === 'wiki' ? 'Wiki' : c.source === 'ddg' ? 'DDG' : c.source === 'google' ? 'Google' : 'Bing';
+            const rows = t.rows || 0;
+            const cols = t.cols || 0;
+            items.push(`<div class="relative group flex flex-col items-center gap-0.5">
+              <img src="${escAttr(c.url)}" loading="lazy" referrerpolicy="no-referrer"
+                class="w-[60px] h-[60px] object-cover rounded border border-gray-600 bg-gray-900 cursor-pointer hover:border-purple-400 transition-colors opacity-80 hover:opacity-100"
+                onerror="this.style.display='none';this.nextElementSibling.style.display='block'"
+                onclick="event.stopPropagation();showZoom(this.src,'${escAttr(iconSlug)}',0)" />
+              <span class="text-[9px] text-gray-500 truncate text-center">${srcLabel}</span>
+              <div class="flex gap-0.5">
+                <form method="POST" action="/reward-config/fetch-candidate" class="inline" onsubmit="event.stopPropagation();this.querySelector('button').disabled=true;this.querySelector('button').textContent='...'">
+                  <input type="hidden" name="slug" value="${escAttr(iconSlug)}" />
+                  <input type="hidden" name="url" value="${escAttr(c.url)}" />
+                  <input type="hidden" name="rows" value="${rows}" />
+                  <input type="hidden" name="cols" value="${cols}" />
+                  <input type="hidden" name="noremgb" value="1" />
+                  <button type="submit" class="text-[9px] bg-blue-700 hover:bg-blue-600 text-white px-1 py-0.5 rounded cursor-pointer leading-tight">选中</button>
+                </form>
+                <form method="POST" action="/reward-config/fetch-candidate" class="inline" onsubmit="event.stopPropagation();this.querySelector('button').disabled=true;this.querySelector('button').textContent='...'">
+                  <input type="hidden" name="slug" value="${escAttr(iconSlug)}" />
+                  <input type="hidden" name="url" value="${escAttr(c.url)}" />
+                  <input type="hidden" name="rows" value="${rows}" />
+                  <input type="hidden" name="cols" value="${cols}" />
+                  <button type="submit" class="text-[9px] bg-purple-700 hover:bg-purple-600 text-white px-1.5 py-0.5 rounded cursor-pointer leading-tight">扣底</button>
+                </form>
+              </div>
+            </div>`);
+          }
+          candidateHTML = `<div class="flex gap-1 mt-1" style="flex-wrap:wrap">${items.join('')}</div>
+            <div class="text-[10px] text-gray-500 mt-1">${imgCands.length} 个候选 —「选中」设为图标 |「扣底」去背景 → 查看效果后手动「验收通过」</div>`;
         }
-      }
-      if (candidates.length > 1) {
-        candidateHTML = `<div class="flex gap-1 mt-1" style="flex-wrap:wrap">${candidates.join('')}</div>`;
-      }
+      } catch {}
     }
 
     return `
@@ -983,9 +1008,10 @@ app.get('/reward-config', requireAdmin, (req, res) => {
   <form method="GET" action="/reward-config/refix-names" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='重找中…';" style="display:inline">
     <button type="submit" class="text-xs bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded font-normal transition-colors cursor-pointer">🔧 重找</button>
   </form>
+  <span class="text-xs text-gray-500">|</span>
+  <button type="button" onclick="bulkMarkNameBad(event)" class="text-xs bg-amber-600 hover:bg-amber-500 text-white px-3 py-1 rounded font-normal transition-colors cursor-pointer">📋 全标名简</button>
   <span class="text-xs text-gray-500">| 自动</span>
-  <span id="autoFetchLabel" class="text-xs cursor-pointer select-none px-2 py-1 rounded" style="background:#${autoFetch ? '22c55e' : '374151'}" onclick="fetch('/reward-config/auto-fetch/toggle').then(r=>r.json()).then(d=>{document.getElementById('autoFetchLabel').style.background=d.on?'#22c55e':'#374151';document.getElementById('autoFetchLabel').textContent='补图'+(d.on?' ✓':'')})">补图${autoFetch ? ' ✓' : ''}</span>
-  <span id="autoRefixLabel" class="text-xs cursor-pointer select-none px-2 py-1 rounded" style="background:#${autoRefix ? '22c55e' : '374151'}" onclick="fetch('/reward-config/auto-refix/toggle').then(r=>r.json()).then(d=>{document.getElementById('autoRefixLabel').style.background=d.on?'#22c55e':'#374151';document.getElementById('autoRefixLabel').textContent='重找'+(d.on?' ✓':'')})">重找${autoRefix ? ' ✓' : ''}</span>
+  <span id="autoUnifiedLabel" class="text-xs cursor-pointer select-none px-2 py-1 rounded" style="background:#${autoUnified ? '22c55e' : '374151'}" onclick="fetch('/reward-config/auto-unified/toggle').then(r=>r.json()).then(d=>{document.getElementById('autoUnifiedLabel').style.background=d.on?'#22c55e':'#374151';document.getElementById('autoUnifiedLabel').textContent='自动处理'+(d.on?' ✓':'')})">自动处理${autoUnified ? ' ✓' : ''}</span>
 </h3>
 <!-- 子进程监控面板，每 5 秒自动刷新 -->
 <div id="procMonitor" style="background:#1f2937;border-radius:0.5rem;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#9ca3af;display:flex;flex-wrap:wrap;gap:12px;align-items:center">
@@ -1263,6 +1289,30 @@ refresh();
       location.reload();
     }
   }
+  // 批量将所有未验收宝物标记为「名称简单」
+  async function bulkMarkNameBad(event) {
+    // 按钮置灰防连点
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '标记中…';
+    // 二次确认
+    if (!confirm('确定要将所有「未验收」的宝物全部标记为「名称简单」吗？\\n\\n旧名称会被加入黑名单，之后可通过「自动处理」或手动「重找」来替换名称。')) {
+      btn.disabled = false;
+      btn.textContent = '📋 全标名简';
+      return;
+    }
+    try {
+      const r = await fetch('/reward-config/bulk-name-bad', { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      alert('已完成：' + d.count + ' 个宝物标记为名称简单，黑名单新增 ' + d.blacklistAdded + ' 个名称');
+      location.reload();
+    } catch(e) {
+      alert('批量标记失败: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = '📋 全标名简';
+    }
+  }
 </script>
 `));
 });
@@ -1381,22 +1431,78 @@ app.post('/reward-config/quality', requireAdmin, (req, res) => {
       }
     }
   }
-  run('UPDATE reward_templates SET quality_status = ? WHERE id = ?', [status, id]);
+  // 验收通过时清除 image_candidates 和资源文件
+  if (status === 'ok') {
+    run(`UPDATE reward_templates SET quality_status = 'ok', image_candidates = '' WHERE id = ?`, [id]);
+  } else if (status === 'image_bad') {
+    // 标记图片不对：保留 icon 字段供搜图参考，保留 image_candidates 供重搜排除旧 URL
+    // quality_status = image_bad，自动补图 worker 识别后读取旧候选 URL 加入 --exclude-urls 重搜
+    run(`UPDATE reward_templates SET quality_status = 'image_bad', updated_at = datetime('now') WHERE id = ?`, [id]);
+  } else {
+    run('UPDATE reward_templates SET quality_status = ? WHERE id = ?', [status, id]);
+  }
+  saveDb();
   res.json({ ok: true });
 });
 
-// GET: 补图 — 每次只处理 1 个「图片不对」宝物，删旧图 → 下载 → 更新 → 刷新
+// POST: 批量将所有「未验收」宝物标记为「名称简单」
+// 遍历 quality_status 为空的所有宝物，将其名称加入黑名单并设置 quality_status = 'name_bad'
+app.post('/reward-config/bulk-name-bad', requireAdmin, (req, res) => {
+  try {
+    // 查询所有未验收的宝物（quality_status 为空字符串或 NULL）
+    const unreviewed = all(
+      `SELECT id, name, rows, cols FROM reward_templates WHERE quality_status IS NULL OR quality_status = ''`
+    ) as { id: string; name: string; rows: number; cols: number }[];
+
+    if (unreviewed.length === 0) {
+      return res.json({ ok: true, count: 0, message: '没有未验收的宝物' });
+    }
+
+    // 读取黑名单
+    const BL_PATH = path.join(__dirname, '..', '..', 'scripts', 'artifacts', '_name_blacklist.json');
+    let bl: string[] = [];
+    try { bl = JSON.parse(fs.readFileSync(BL_PATH, 'utf-8')); } catch {}
+
+    let addedCount = 0;
+    for (const t of unreviewed) {
+      if (!t.name) continue;
+      // 已存在的不重复添加
+      if (!bl.includes(t.name)) {
+        bl.push(t.name);
+        addedCount++;
+      }
+      // 标记为 name_bad
+      run(`UPDATE reward_templates SET quality_status = 'name_bad', updated_at = datetime('now') WHERE id = ?`, [t.id]);
+    }
+
+    // 写回黑名单
+    fs.writeFileSync(BL_PATH, JSON.stringify(bl, null, 2), 'utf-8');
+    saveDb();
+
+    console.log(`[bulk-name-bad] 共 ${unreviewed.length} 个未验收宝物 → name_bad，黑名单新增 ${addedCount} 个名称`);
+    res.json({ ok: true, count: unreviewed.length, blacklistAdded: addedCount });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET: 补图 — 每次只处理 1 个「图片不对」宝物，删旧图 → 搜候选 → 下载首图 → 更新 → 刷新
+// v3.0: fetch-real-icons.mjs 只输出 CANDIDATES JSON（不写文件），本路由负责解析并下载
 app.get('/reward-config/fetch-next', requireAdmin, async (_req, res) => {
   const { execSync } = require('child_process') as typeof import('child_process');
   const root = path.join(__dirname, '..', '..');
+  const sharp = require('sharp');
 
   try {
     // 优先 image_bad（用户明确标记），其次空状态（无图标，无需用户手动点图片不对）
-    const rows = all(`SELECT icon, quality_status FROM reward_templates WHERE (quality_status LIKE '%image_bad%' OR quality_status IS NULL OR quality_status = '') ORDER BY (CASE WHEN quality_status LIKE '%image_bad%' THEN 0 ELSE 1 END), (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC LIMIT 1`) as { icon: string; quality_status: string }[];
+    // 排除 image_processing，避免和自动补图 worker 冲突
+    // 需要 rows/cols 用于精确 DB 更新（避免 slug 碰撞导致多行命中）
+    const rows = all(`SELECT rows, cols, icon, quality_status FROM reward_templates WHERE (quality_status LIKE '%image_bad%' OR quality_status IS NULL OR quality_status = '') AND quality_status != 'image_processing' ORDER BY (CASE WHEN quality_status LIKE '%image_bad%' THEN 0 ELSE 1 END), (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC LIMIT 1`) as { rows: number; cols: number; icon: string; quality_status: string }[];
     if (rows.length === 0) return res.redirect('/reward-config?unreviewed=1');
-    const slug = rows[0].icon.match(/\/icons\/(.+)\.png$/)?.[1];
+    const row = rows[0];
+    const slug = row.icon.match(/\/icons\/(.+)\.png$/)?.[1];
     if (!slug) return res.redirect('/reward-config?unreviewed=1');
-    console.log(`[fetch-next] 补图: ${slug}`);
+    console.log(`[fetch-next] 补图: ${row.rows}×${row.cols} (${slug})`);
 
     // 删旧图标主文件 + 所有候选图文件（1-5），避免残留
     for (const dir of ['resource/icons', 'public/icons']) {
@@ -1406,30 +1512,189 @@ app.get('/reward-config/fetch-next', requireAdmin, async (_req, res) => {
       }
     }
 
-    // 下载新图标（单件，pipe + maxBuffer + --max-old-space-size 防 OOM）
-    execSync(`node --max-old-space-size=512 scripts/artifacts/fetch-real-icons.mjs --slugs="${slug}"`, {
-      cwd: root, stdio: 'pipe', timeout: 120000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env }
+    // v3.0: 调用 fetch-real-icons.mjs 搜索候选 URL（只用 --coords 精确定位，避免占位图 slug 碰撞）
+    // stderr 含日志，stdout 含 CANDIDATES JSON
+    const stdout = execSync(`node --max-old-space-size=512 scripts/artifacts/fetch-real-icons.mjs --coords="${row.rows}-${row.cols}"`, {
+      cwd: root, timeout: 120000, encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024, env: { ...process.env }
     });
 
-    // 下载新图标；确认文件存在才清状态
-    const resPath = path.join(root, 'resource', 'icons', `${slug}.png`);
-    if (fs.existsSync(resPath) && fs.statSync(resPath).size > 500) {
-      run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = '' WHERE icon = ?`, [`/icons/${slug}.png`]);
+    // 解析 CANDIDATES JSON 行（取最后一条，防止多行干扰）
+    const lines = stdout.trim().split('\n').filter(l => l.startsWith('CANDIDATES='));
+    const lastLine = lines[lines.length - 1] || '';
+    const candidatesStr = lastLine.startsWith('CANDIDATES=') ? lastLine.substring(11) : '';
+
+    if (!candidatesStr) {
+      // 无候选 URL：标记 image_bad，避免无限重试
+      run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
       saveDb();
-    } else {
-      return res.status(500).send(`补图无结果: ${slug}（无 Wiki 覆盖且 Google 不通）`);
+      return res.status(500).send(`补图无结果: ${slug}（无 Wiki 覆盖且搜索引擎均无结果）`);
     }
+
+    const data = JSON.parse(candidatesStr);
+
+    // 坐标交叉校验：防止子进程因 slug 碰撞返回错误宝物的候选图（串货防护）
+    const verifyCoords = `${data.rows}-${data.cols}`;
+    const expectCoords = `${row.rows}-${row.cols}`;
+    if (verifyCoords !== expectCoords) {
+      console.log(`[fetch-next] 串货警报: 期望 ${expectCoords} 实际 ${verifyCoords} (${data.slug}), 丢弃`);
+      run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
+      saveDb();
+      return res.status(500).send(`串货警报: 子进程返回错误坐标 ${verifyCoords}，期望 ${expectCoords}`);
+    }
+
+    const candidates = (data.candidates || []) as { url: string; source: string }[];
+    if (candidates.length === 0) {
+      run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
+      saveDb();
+      return res.status(500).send(`补图无结果: ${slug}（候选列表为空）`);
+    }
+
+    // 存入 image_candidates 字段（保留所有候选供用户备用选择）
+    run(`UPDATE reward_templates SET image_candidates = ?, updated_at = datetime('now') WHERE rows=? AND cols=?`,
+      [JSON.stringify(candidates), row.rows, row.cols]);
+    saveDb();
+
+    // 自动下载第一个候选图（复用 fetch-candidate 的 httpGetBuffer → rembg → sharp 流水线）
+    console.log(`[fetch-next] 尝试下载候选: ${candidates[0].url}`);
+    const body = await httpGetBuffer(candidates[0].url, 20000);
+    if (!body || body.length < 200) {
+      // 下载失败但候选已存 DB，用户可手动选别的候选
+      return res.redirect('/reward-config?unreviewed=1');
+    }
+
+    // 保存临时下载原图
+    const tmpDir = path.join(root, 'resource', 'icons');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const pubDir = path.join(root, 'public', 'icons');
+    fs.mkdirSync(pubDir, { recursive: true });
+    const tmpRaw = path.join(tmpDir, `_dl_${Date.now()}.png`);
+    const tmpRemoved = path.join(tmpDir, `_bg_${Date.now()}.png`);
+    const outPath = path.join(tmpDir, `${slug}.png`);
+    const pubPath = path.join(pubDir, `${slug}.png`);
+    fs.writeFileSync(tmpRaw, body);
+
+    // rembg 扣底（失败不致命，直接缩放原图）
+    let sourceForResize = tmpRaw;
+    try {
+      execSync(`rembg i "${tmpRaw}" "${tmpRemoved}"`, { timeout: 60000, stdio: 'pipe' });
+      if (fs.existsSync(tmpRemoved) && fs.statSync(tmpRemoved).size > 500) {
+        sourceForResize = tmpRemoved;
+      }
+    } catch { /* rembg 失败不致命，继续用原图 */ }
+
+    // sharp 缩放为 500×500 透明 PNG
+    await sharp(sourceForResize)
+      .resize(500, 500, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toFile(outPath);
+    fs.copyFileSync(outPath, pubPath);
+
+    // 清理临时文件
+    try { fs.unlinkSync(tmpRaw); } catch {}
+    if (sourceForResize !== tmpRaw) try { fs.unlinkSync(sourceForResize); } catch {}
+
+    // 更新 DB：保存图标路径 + 清除候选链接
+    run(`UPDATE reward_templates SET icon = ?, image_candidates = '', updated_at = datetime('now'), quality_status = '' WHERE rows=? AND cols=?`,
+      [`/icons/${slug}.png`, row.rows, row.cols]);
+    saveDb();
+    console.log(`[fetch-next] 补图完成: ${slug}`);
 
     return res.redirect('/reward-config?unreviewed=1');
   } catch (e: any) {
     return res.status(500).send(`补图失败: ${e.message || e}`);
   }
 });
+/** 简易 HTTP/HTTPS GET 下载（返回 Buffer），供 fetch-candidate 路由使用 */
+async function httpGetBuffer(urlStr: string, timeout = 20000): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const mod = urlStr.startsWith('https:') ? require('https') : require('http');
+    const req = mod.get(urlStr, { timeout, headers: { 'User-Agent': 'CursedMinesweeper/1.0' } }, (res: any) => {
+      if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode}`));
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+// POST: 下载候选图 → rembg 扣底 → sharp 缩放 → 保存为默认图标（Admin 面板用）
+// 参数 noremgb=1 时跳过 rembg，仅下载+缩放（用于「选中」按钮）
+app.post('/reward-config/fetch-candidate', requireAdmin, async (req, res) => {
+  const { execSync } = require('child_process') as typeof import('child_process');
+  const root = path.join(__dirname, '..', '..');
+  const slug = (req.body.slug || '').trim();
+  const url = (req.body.url || '').trim();
+  const rows = parseInt(req.body.rows || '0', 10);
+  const cols = parseInt(req.body.cols || '0', 10);
+  const noRembg = req.body.noremgb === '1';
+  if (!slug || !url) return res.status(400).send('缺少 slug 或 url');
+  try {
+    // 坐标交叉校验：从 DB 查询当前 icon 提取真实 slug，防御前端传错 slug 导致文件写错位置
+    let realSlug = slug;
+    if (rows > 0 && cols > 0) {
+      const dbRow = get(`SELECT icon FROM reward_templates WHERE rows=? AND cols=?`, [rows, cols]) as { icon?: string } | undefined;
+      const dbSlug = dbRow?.icon?.match(/\/icons\/(.+)\.png$/)?.[1];
+      if (dbSlug && dbSlug !== slug) {
+        console.log(`[fetch-candidate] slug 不匹配: 请求 ${slug} DB 中为 ${dbSlug}，以 DB 为准`);
+        realSlug = dbSlug;
+      }
+    }
 
-// GET: 重找宝物 — 每次只处理 1 个「名称简单」宝物，改名 → 下载图标 → 刷新
+    const tmpDir = path.join(root, 'resource', 'icons');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const tmpRaw = path.join(tmpDir, `_dl_${Date.now()}.png`);
+    const tmpRemoved = path.join(tmpDir, `_bg_${Date.now()}.png`);
+    const outPath = path.join(tmpDir, `${realSlug}.png`);
+    const pubPath = path.join(root, 'public', 'icons', `${realSlug}.png`);
+    fs.mkdirSync(path.join(root, 'public', 'icons'), { recursive: true });
+    // 1. 下载原图
+    const body = await httpGetBuffer(url, 20000);
+    if (!body || body.length < 200) return res.status(500).send('下载失败或图片太小');
+    fs.writeFileSync(tmpRaw, body);
+    // 2. rembg 扣底（可跳过）
+    let sourceForResize = tmpRaw;
+    if (!noRembg) {
+      try {
+        execSync(`rembg i "${tmpRaw}" "${tmpRemoved}"`, { timeout: 60000, stdio: 'pipe' });
+        if (fs.existsSync(tmpRemoved) && fs.statSync(tmpRemoved).size > 500) {
+          sourceForResize = tmpRemoved;
+        }
+      } catch { /* rembg 失败不致命 */ }
+    }
+    // 3. sharp 缩放为 500×500 透明 PNG
+    const sharp = require('sharp');
+    await sharp(sourceForResize)
+      .resize(500, 500, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toFile(outPath);
+    fs.copyFileSync(outPath, pubPath);
+    // 4. 清理临时文件
+    try { fs.unlinkSync(tmpRaw); } catch {}
+    if (sourceForResize !== tmpRaw) try { fs.unlinkSync(sourceForResize); } catch {}
+    // 5. 更新 DB — 保存图标 + 清除候选链接（已选定此图）
+    if (rows > 0 && cols > 0) {
+      run(`UPDATE reward_templates SET icon = ?, image_candidates = '', updated_at = datetime('now') WHERE rows=? AND cols=?`,
+        [`/icons/${realSlug}.png`, rows, cols]);
+    } else {
+      run(`UPDATE reward_templates SET icon = ?, image_candidates = '', updated_at = datetime('now') WHERE icon = ?`,
+        [`/icons/${realSlug}.png`, `/icons/${realSlug}.png`]);
+    }
+    saveDb();
+    console.log(`[fetch-candidate] ${realSlug} 已选定，待人工验收`);
+    return res.redirect('/reward-config?unreviewed=1');
+  } catch (e: any) {
+    return res.status(500).send(`下载处理失败: ${e.message || e}`);
+  }
+});
+
+// GET: 重找宝物 — 每次只处理 1 个「名称简单」宝物，改名 → 搜图 → 下载 → 刷新
+// v3.0: fetch-real-icons.mjs 只输出 CANDIDATES JSON（不写文件），本路由负责解析并下载
 app.get('/reward-config/refix-names', requireAdmin, async (_req, res) => {
   const { execSync } = require('child_process') as typeof import('child_process');
   const root = path.join(__dirname, '..', '..');
+  const sharp = require('sharp');
 
   try {
     const rows = all(`SELECT rows, cols FROM reward_templates WHERE quality_status LIKE '%name_bad%' ORDER BY (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC LIMIT 1`) as { rows: number; cols: number }[];
@@ -1447,15 +1712,80 @@ app.get('/reward-config/refix-names', requireAdmin, async (_req, res) => {
     const newSlug = newSlugMatch ? newSlugMatch[1] : '';
     console.log(`[refix-names] 新slug: ${newSlug}`);
 
-    // 下载新图标 — 仅处理目标宝物，pipe + maxBuffer 防 OOM
-    if (newSlug) {
-      execSync(`node --max-old-space-size=512 scripts/artifacts/fetch-real-icons.mjs --slugs="${newSlug}"`, {
-        cwd: root, stdio: 'pipe', timeout: 120000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env }
-      });
-    }
-
     // _refix-names.mjs 已直接写磁盘 DB，服务器只需要 reload 同步
     await reloadFromDisk();
+
+    // v3.0: 调用 fetch-real-icons.mjs 搜索候选 URL（只用 --coords 精确定位）
+    if (newSlug) {
+      const fetchOut = execSync(`node --max-old-space-size=512 scripts/artifacts/fetch-real-icons.mjs --coords="${coords}"`, {
+        cwd: root, timeout: 120000, encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024, env: { ...process.env }
+      });
+
+      // 解析 CANDIDATES JSON 行
+      const lines = fetchOut.trim().split('\n').filter(l => l.startsWith('CANDIDATES='));
+      const lastLine = lines[lines.length - 1] || '';
+      const candidatesStr = lastLine.startsWith('CANDIDATES=') ? lastLine.substring(11) : '';
+
+      if (candidatesStr) {
+        const data = JSON.parse(candidatesStr);
+
+        // 坐标交叉校验：防止子进程因 slug 碰撞返回错误宝物的候选图（串货防护）
+        const verifyCoords = `${data.rows}-${data.cols}`;
+        if (verifyCoords !== coords) {
+          console.log(`[refix-names] 串货警报: 期望 ${coords} 实际 ${verifyCoords} (${data.slug}), 丢弃`);
+          return res.status(500).send(`串货警报: 子进程返回错误坐标 ${verifyCoords}，期望 ${coords}`);
+        }
+
+        const candidates = (data.candidates || []) as { url: string; source: string }[];
+        if (candidates.length > 0) {
+          // 存入 image_candidates 字段（保留所有候选供用户备用）
+          run(`UPDATE reward_templates SET image_candidates = ?, updated_at = datetime('now') WHERE rows=? AND cols=?`,
+            [JSON.stringify(candidates), r.rows, r.cols]);
+          saveDb();
+
+          // 自动下载第一个候选图
+          console.log(`[refix-names] 尝试下载候选: ${candidates[0].url}`);
+          const body = await httpGetBuffer(candidates[0].url, 20000);
+          if (body && body.length >= 200) {
+            const tmpDir = path.join(root, 'resource', 'icons');
+            fs.mkdirSync(tmpDir, { recursive: true });
+            const pubDir = path.join(root, 'public', 'icons');
+            fs.mkdirSync(pubDir, { recursive: true });
+            const tmpRaw = path.join(tmpDir, `_dl_${Date.now()}.png`);
+            const tmpRemoved = path.join(tmpDir, `_bg_${Date.now()}.png`);
+            const outPath = path.join(tmpDir, `${newSlug}.png`);
+            const pubPath = path.join(pubDir, `${newSlug}.png`);
+            fs.writeFileSync(tmpRaw, body);
+
+            // rembg 扣底（失败不致命）
+            let sourceForResize = tmpRaw;
+            try {
+              execSync(`rembg i "${tmpRaw}" "${tmpRemoved}"`, { timeout: 60000, stdio: 'pipe' });
+              if (fs.existsSync(tmpRemoved) && fs.statSync(tmpRemoved).size > 500) {
+                sourceForResize = tmpRemoved;
+              }
+            } catch { /* rembg 失败不致命 */ }
+
+            // sharp 缩放为 500×500 透明 PNG
+            await sharp(sourceForResize)
+              .resize(500, 500, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+              .png()
+              .toFile(outPath);
+            fs.copyFileSync(outPath, pubPath);
+
+            // 清理临时文件
+            try { fs.unlinkSync(tmpRaw); } catch {}
+            if (sourceForResize !== tmpRaw) try { fs.unlinkSync(sourceForResize); } catch {}
+
+            // 更新 DB：保存图标 + 清除候选
+            run(`UPDATE reward_templates SET icon = ?, image_candidates = '', updated_at = datetime('now') WHERE rows=? AND cols=?`,
+              [`/icons/${newSlug}.png`, r.rows, r.cols]);
+            saveDb();
+            console.log(`[refix-names] 图标下载完成: ${newSlug}`);
+          }
+        }
+      }
+    }
 
     // 标记最近更新
     run(`UPDATE reward_templates SET updated_at = datetime('now') WHERE rows=? AND cols=?`, [r.rows, r.cols]);
@@ -1469,16 +1799,10 @@ app.get('/reward-config/refix-names', requireAdmin, async (_req, res) => {
   }
 });
 
-// GET: 切换「自动补图」开关（返回 JSON）
-app.get('/reward-config/auto-fetch/toggle', requireAdmin, (_req, res) => {
-  autoFetch = !autoFetch;
-  return res.json({ on: autoFetch });
-});
-
-// GET: 切换「自动重找」开关（返回 JSON）
-app.get('/reward-config/auto-refix/toggle', requireAdmin, (_req, res) => {
-  autoRefix = !autoRefix;
-  return res.json({ on: autoRefix });
+// GET: 切换「统一自动处理」开关（返回 JSON）
+app.get('/reward-config/auto-unified/toggle', requireAdmin, (_req, res) => {
+  autoUnified = !autoUnified;
+  return res.json({ on: autoUnified });
 });
 
 // POST: 删除奖品模板
@@ -1565,7 +1889,7 @@ export function startAdmin() {
     const nameBadCount = (get(`SELECT COUNT(*) as cnt FROM reward_templates WHERE quality_status LIKE '%name_bad%'`) as any)?.cnt || 0;
     const imageBadCount = (get(`SELECT COUNT(*) as cnt FROM reward_templates WHERE quality_status LIKE '%image_bad%' OR quality_status IS NULL OR quality_status = ''`) as any)?.cnt || 0;
     return res.json({
-      autoFetch, autoRefix,
+      autoUnified,
       refixActive: procTracker.refixActive,
       fetchActive: procTracker.fetchActive,
       lastRefixAt: procTracker.lastRefixAt,
@@ -1616,130 +1940,178 @@ export function startAdmin() {
     });
   }
 
-  // ── 重找宝物：一次取 BATCH 件，合并为单次 --coords 调用（1 个子进程写 DB，无竞争）──
-  async function stepAutoRefix() {
-    if (!autoRefix) return;
-    try {
-      const rows = all(`SELECT rows, cols FROM reward_templates WHERE quality_status LIKE '%name_bad%' ORDER BY (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC LIMIT ${REFIX_BATCH}`) as { rows: number; cols: number }[];
-      if (rows.length === 0) return;
-
-      // 构建批量坐标参数（单次子进程调用，避免多进程争抢 DB 文件）
-      const coordsStr = rows.map(r => `${r.rows}-${r.cols}`).join(',');
-      console.log(`[auto-refix] 批量重找 ${rows.length} 件: ${coordsStr}`);
-
-      // 单次子进程调用 _refix-names.mjs（脚本直接写磁盘 DB，无需预先 saveDb）
-      procTracker.refixActive++;
-      procTracker.lastRefixAt = new Date().toISOString();
-      let refixOut: string;
-      try {
-        refixOut = runNode('scripts/artifacts/_refix-names.mjs', `--coords="${coordsStr}"`, REFIX_TIMEOUT, 8);
-        procTracker.lastRefixOk = true;
-        procTracker.refixDone += rows.length;
-      } catch (e) {
-        procTracker.lastRefixOk = false;
-        throw e;
-      } finally {
-        procTracker.refixActive--;
-      }
-      // 解析输出：new=slug1,slug2,... old=slug1,slug2,...
-      const newMatch = refixOut.match(/new=([^\s]+)/);
-      const newSlugs = newMatch ? newMatch[1].split(',') : [];
-      console.log(`[auto-refix] 新宝物: ${newSlugs.length > 0 ? newSlugs.join(', ') : '无'}`);
-
-      // 从磁盘重新加载 DB：_refix-names.mjs 已直接写磁盘改名，内存 DB 仍是旧数据
-      // 必须在标记 quality_status 前同步，否则 stepAutoFetch 的 saveDb() 会覆盖改名结果
-      await reloadFromDisk();
-
-      // 图标下载采用 fire-and-forget 模式，不阻塞重找主循环
-      if (newSlugs.length > 0) {
-        newSlugs.forEach(slug => {
-          procTracker.fetchActive++;
-          runNodeAsync('scripts/artifacts/fetch-real-icons.mjs', `--slugs="${slug}"`, FETCH_TIMEOUT)
-            .catch((e: any) => {
-              console.log(`[auto-refix] 图标下载失败 ${slug}: ${e.message?.substring(0, 80)}`);
-            })
-            .finally(() => { procTracker.fetchActive--; });
-        });
-      }
-
-      // 标记已处理（内存 DB 直接更新，不 reloadFromDisk 避免整库重载）
-      // _refix-names.mjs 已直接写磁盘 DB，服务器的内存 DB 只需标记这些行为已处理
-      for (const r of rows) {
-        run(`UPDATE reward_templates SET quality_status = '', updated_at = datetime('now') WHERE rows=? AND cols=?`, [r.rows, r.cols]);
-      }
-      console.log(`[auto-refix] 完成 ${rows.length} 件`);
-    } catch (e: any) {
-      // 子进程崩溃时 stderr 才有真正错误原因（execSync 的 e.message 只含进程名）
-      const detail = [e.stderr, e.stdout, e.message].filter(Boolean).map((s: string) => s.substring(0, 500)).join(' | ');
-      console.log(`[auto-refix] 失败: ${detail}`);
-    }
+  /**
+   * 异步子进程（捕获 stdout 版本）—— 用于 fetch-real-icons.mjs v3.0 读取 CANDIDATES JSON
+   * stderr 仍丢弃（日志用），只收集 stdout 中的结构化输出
+   */
+  function runNodeAsyncCapture(script: string, extraArgs: string, timeoutSec: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const { spawn } = require('child_process') as typeof import('child_process');
+      const { PassThrough } = require('stream');
+      const args = ['--max-old-space-size=512', script, ...extraArgs.replace(/"/g, '').split(/\s+/).filter(Boolean)];
+      const child = spawn('node', args, { cwd: root, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      // stderr 丢弃（fetch-real-icons.mjs 的日志输出）
+      const discard = new PassThrough();
+      child.stderr.pipe(discard);
+      // stdout 收集（CANDIDATES JSON）
+      const stdoutChunks: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); }, timeoutSec * 1000);
+      child.on('close', (code: number) => {
+        clearTimeout(timer);
+        if (timedOut) reject(new Error('timeout ' + timeoutSec + 's'));
+        else if (code !== 0) reject(new Error('exit code ' + code));
+        else resolve(Buffer.concat(stdoutChunks).toString('utf8'));
+      });
+      child.on('error', (err: Error) => { clearTimeout(timer); reject(err); });
+    });
   }
 
-  // ── 补图：5 个独立 worker 持续并发，每完成一件自动取下一件 ──
-  let fetchPoolActive = false;
+  // ── 统一自动处理：每轮先处理 name_bad（重找名称 + 后续补图），再处理 image_bad / 空状态（补图）──
+  // 完成后统一放回未验收状态（quality_status=''），等待用户审核图片候选
+  let unifiedPoolActive = false;
 
-  async function stepAutoFetch() {
-    if (!autoFetch || fetchPoolActive) return;
-    fetchPoolActive = true;
+  async function stepAutoUnified() {
+    if (!autoUnified || unifiedPoolActive) return;
+    unifiedPoolActive = true;
 
-    /** 单一 worker：取 1 件 → 下载 → 取下一件，直到队列空 */
-    const worker = async () => {
-      while (autoFetch) {
-        const row = get(`SELECT rows, cols, icon FROM reward_templates WHERE (quality_status LIKE '%image_bad%' OR quality_status IS NULL OR quality_status = '') ORDER BY (CASE WHEN quality_status LIKE '%image_bad%' THEN 0 ELSE 1 END), (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC LIMIT 1`) as { rows: number; cols: number; icon: string } | undefined;
-        if (!row) break; // 无待补图
+    try {
+      // ═════ 第一步：name_bad — 调用 _refix-names.mjs 重找非黑名单名称 ═════
+      // _refix-names.mjs 会直接写磁盘 DB（改名 + 更新 icon + 清空 quality_status + 加旧名到黑名单）
+      const nameBadRows = all(
+        `SELECT rows, cols FROM reward_templates 
+         WHERE quality_status LIKE '%name_bad%' 
+         ORDER BY (CASE WHEN updated_at = '' THEN 0 ELSE 1 END), updated_at ASC, rows DESC, cols DESC 
+         LIMIT ${REFIX_BATCH}`
+      ) as { rows: number; cols: number }[];
 
-        const slug = row.icon.match(/\/icons\/(.+)\.png$/)?.[1];
-        if (!slug) break;
-        console.log(`[auto-fetch] 补图: ${row.rows}×${row.cols} (${slug})`);
-        // 删除旧图标
+      if (nameBadRows.length > 0) {
+        const coordsStr = nameBadRows.map(r => `${r.rows}-${r.cols}`).join(',');
+        console.log(`[auto-unified] 重找名称 ${nameBadRows.length} 件: ${coordsStr}`);
+
+        procTracker.refixActive++;
+        procTracker.lastRefixAt = new Date().toISOString();
+        try {
+          runNode('scripts/artifacts/_refix-names.mjs', `--coords="${coordsStr}"`, REFIX_TIMEOUT, 8);
+          procTracker.lastRefixOk = true;
+          procTracker.refixDone += nameBadRows.length;
+        } catch (e: any) {
+          procTracker.lastRefixOk = false;
+          const detail = [e.stderr, e.stdout, e.message].filter(Boolean).map((s: string) => s.substring(0, 500)).join(' | ');
+          console.log(`[auto-unified] 重找名称失败: ${detail}`);
+        } finally {
+          procTracker.refixActive--;
+        }
+
+        // _refix-names.mjs 已直接写磁盘 DB，必须 reload 才能看到改名结果
+        await reloadFromDisk();
+        console.log(`[auto-unified] 重找名称完成，DB 已同步`);
+      }
+
+      // ═════ 第二步：补图 — 处理 image_bad + 空状态（含刚改名的 name_bad 项，它们现在是 ''）═════
+      // 跳过 icon 为空的项（用户手动点「图片不对」已清空 icon，不需要自动搜图）
+      // 跳过已有候选图的空状态项（image_candidates 非空 = 已搜过等待验收，不需要重搜）
+      const fetchRows = all(
+        `SELECT rows, cols, icon, quality_status FROM reward_templates
+         WHERE (quality_status LIKE '%image_bad%' OR quality_status IS NULL OR quality_status = '')
+           AND quality_status != 'image_processing'
+           AND icon IS NOT NULL AND icon != ''
+           AND (quality_status LIKE '%image_bad%' OR image_candidates IS NULL OR image_candidates = '' OR image_candidates = '[]')
+         ORDER BY (CASE WHEN quality_status LIKE '%image_bad%' THEN 0 ELSE 1 END),
+                  (CASE WHEN updated_at = '' THEN 0 ELSE 1 END),
+                  updated_at ASC, rows DESC, cols DESC
+         LIMIT ${FETCH_BATCH}`
+      ) as { rows: number; cols: number; icon: string; quality_status: string }[];
+
+      if (fetchRows.length === 0) return;
+
+      // 立即标记为 image_processing，阻止并行冲突
+      for (const r of fetchRows) {
+        run(`UPDATE reward_templates SET quality_status = 'image_processing', updated_at = datetime('now') WHERE rows=? AND cols=?`, [r.rows, r.cols]);
+      }
+      saveDb();
+
+      // 并行 worker：每个 item 调用 fetch-real-icons.mjs v3.0 收集候选 URL
+      // 若之前是 image_bad（重搜），加 --retry 参数改变搜索引擎查询词，避免返回相同结果
+      const worker = async (row: { rows: number; cols: number; icon: string; quality_status: string }) => {
+        const slug = row.icon.match(/\/icons\/(.+)\.png$/)?.[1] || `item-${row.rows}-${row.cols}`;
+        const coords = `${row.rows}-${row.cols}`;
+        const isRetry = (row.quality_status || '').includes('image_bad');
+        console.log(`[auto-unified] 搜图${isRetry ? ' [重搜]' : ''}: ${coords} (${slug})`);
+
+        // 清理旧图标文件
         for (const dir of ['resource/icons', 'public/icons']) {
           for (const suffix of ['', ...Array.from({ length: 5 }, (_, i) => `_${i + 1}`)]) {
             try { const fp = path.join(root, dir, `${slug}${suffix}.png`); if (fs.existsSync(fp)) fs.unlinkSync(fp); } catch { }
           }
         }
+
+        // 重搜时：读取旧 image_candidates，提取 URL 传给 fetch-real-icons 排除（防返回相同图片）
+        let excludeArg = '';
+        if (isRetry) {
+          const oldCandidates = get('SELECT image_candidates FROM reward_templates WHERE rows=? AND cols=?', [row.rows, row.cols]) as { image_candidates?: string } | undefined;
+          try {
+            const oldList = JSON.parse(oldCandidates?.image_candidates || '[]');
+            const oldUrls = oldList.map((c: any) => c.url).filter(Boolean);
+            if (oldUrls.length > 0) {
+              excludeArg = ` --exclude-urls="${oldUrls.join(' ')}"`;
+              console.log(`[auto-unified] ${coords} 排除旧图: ${oldUrls.length} 个 URL`);
+            }
+          } catch {}
+        }
+
         procTracker.lastFetchAt = new Date().toISOString();
         procTracker.fetchActive++;
-        let ok = false;
         try {
-          await runNodeAsync('scripts/artifacts/fetch-real-icons.mjs', `--slugs="${slug}"`, FETCH_TIMEOUT);
-          ok = true;
+          const stdout = await runNodeAsyncCapture('scripts/artifacts/fetch-real-icons.mjs', `--coords="${coords}"${isRetry ? ' --retry' : ''}${excludeArg}`, 90);
+          const lines = stdout.trim().split('\n').filter(l => l.startsWith('CANDIDATES='));
+          const lastLine = lines[lines.length - 1] || '';
+          const candidatesStr = lastLine.startsWith('CANDIDATES=') ? lastLine.substring(11) : '';
+          if (candidatesStr) {
+            const data = JSON.parse(candidatesStr);
+            const verifyCoords = `${data.rows}-${data.cols}`;
+            if (verifyCoords !== coords) {
+              console.log(`[auto-unified] ⚠ 串货警报: 期望 ${coords} 实际 ${verifyCoords} (${data.slug}), 丢弃`);
+              run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
+              saveDb();
+              return;
+            }
+            const candidates = data.candidates || [];
+            // 存入 image_candidates，清空 quality_status 放回未验收供用户审核
+            run(`UPDATE reward_templates SET image_candidates = ?, updated_at = datetime('now'), quality_status = '' WHERE rows=? AND cols=?`,
+              [JSON.stringify(candidates), row.rows, row.cols]);
+            procTracker.fetchDone++;
+            procTracker.lastFetchOk = true;
+            console.log(`[auto-unified] ${coords} 收集 ${candidates.length} 个候选 → 未验收`);
+          } else {
+            // 无候选 URL：恢复为 image_bad
+            run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
+            console.log(`[auto-unified] ${coords} 无候选，保持 image_bad`);
+          }
         } catch (e: any) {
-          console.log(`[auto-fetch] ${slug} 下载失败: ${e.message?.substring(0, 300)}`);
+          run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = 'image_bad' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
+          console.log(`[auto-unified] ${coords} 搜图失败: ${e.message?.substring(0, 200)}`);
         }
         procTracker.fetchActive--;
+        saveDb();
+      };
 
-        // 确认图标文件确实生成了才更新 DB
-        const resPath = path.join(root, 'resource', 'icons', `${slug}.png`);
-        const hasFile = resPath && fs.existsSync(resPath) && fs.statSync(resPath).size > 500;
-        if (ok && hasFile) {
-          run(`UPDATE reward_templates SET updated_at = datetime('now'), quality_status = '' WHERE rows=? AND cols=?`, [row.rows, row.cols]);
-          procTracker.fetchDone++;
-          procTracker.lastFetchOk = true;
-          saveDb();
-        } else {
-          run(`UPDATE reward_templates SET updated_at = datetime('now') WHERE rows=? AND cols=?`, [row.rows, row.cols]);
-          saveDb();
-          console.log(`[auto-fetch] ${row.rows}×${row.cols} 无候选，保持原状态`);
-        }
-      }
-    };
-
-    // 启动 5 个并发 worker，全部跑完为止
-    await Promise.all(Array.from({ length: FETCH_BATCH }, () => worker()));
-    fetchPoolActive = false;
+      await Promise.all(fetchRows.map(r => worker(r)));
+    } finally {
+      unifiedPoolActive = false;
+    }
   }
 
-  /** 递归调度：每轮完成后等 3 秒再启动下一轮 */
+  /** 递归调度：每轮完成后等 CYCLE_DELAY 再启动下一轮 */
   function scheduleNext() {
     autoTimer = setTimeout(async () => {
-      await stepAutoRefix();
-      await stepAutoFetch();
+      await stepAutoUnified();
       scheduleNext();
     }, CYCLE_DELAY);
   }
   scheduleNext();
-  // 启动时记录自动脚本状态，便于运维排查
-  console.log(`[admin] 自动补图: ${autoFetch ? '✅ 运行中' : '⏹ 已关闭'} | 自动重找: ${autoRefix ? '✅ 运行中' : '⏹ 已关闭'} | 周期: ${CYCLE_DELAY / 1000}s`);
+  console.log(`[admin] 统一自动处理: ${autoUnified ? '✅ 运行中' : '⏹ 已关闭'} | 周期: ${CYCLE_DELAY / 1000}s`);
 }
 
 // Direct start (standalone: npx ts-node src/admin.ts)

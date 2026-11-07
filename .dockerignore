@@ -1,0 +1,13 @@
+# 构建上下文里不带本机依赖和产物。容器内用 Linux 依赖，避免把 Windows 的 node_modules 打进镜像。
+node_modules
+server/node_modules
+dist
+server/dist
+.git
+.cursor
+*.log
+server/data
+public/icons
+public/covers
+resource/icons
+resource/covers

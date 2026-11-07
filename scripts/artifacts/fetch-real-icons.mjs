@@ -15,11 +15,13 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import https from 'https';
 import http from 'http';
-import crypto from 'crypto';
-import { execSync } from 'child_process';
-import sharp from 'sharp';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import initSqlJs from '../../server/node_modules/sql.js/dist/sql-wasm.js';
+
+// ═══════════ 重定向所有日志到 stderr，stdout 只输出 CANDIDATES JSON ═══════════
+// 避免日志与结构化输出混在一起导致父进程解析串货
+const originalLog = console.log;
+console.log = (...args) => process.stderr.write(args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') + '\n');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../../');
@@ -32,6 +34,16 @@ const START = parseInt(args.find(a => a.startsWith('--start='))?.split('=')[1] |
 const END = parseInt(args.find(a => a.startsWith('--end='))?.split('=')[1] || '999', 10);
 /** 按精确 slug 列表过滤（逗号分隔），只处理这些宝物，提升单件重找/补图速度 */
 const SLUGS_FILTER = args.find(a => a.startsWith('--slugs='))?.split('=')[1]?.split(',').filter(Boolean).map(s => s.trim()) || null;
+/** 按 rows-cols 坐标过滤（逗号分隔），如 9×20 → "9-20"；比 slug 更精确，避免占位图 slug 碰撞 */
+const COORDS_FILTER = args.find(a => a.startsWith('--coords='))?.split('=')[1]?.split(',').filter(Boolean).map(s => s.trim()) || null;
+// --retry：此宝物之前搜过一次以上，应改变搜索策略避免返回相同结果
+const IS_RETRY = args.includes('--retry');
+// --exclude-urls：重搜时排除之前出现过的图片 URL（空格分隔），防止反复返回相同候选
+const EXCLUDE_URLS = new Set(
+  (args.find(a => a.startsWith('--exclude-urls='))?.split('=')[1] || '')
+    .split(/\s+/)
+    .filter(u => u.startsWith('http'))
+);
 
 /** 处理后的目标尺寸 */
 const ICON_SIZE = 500;
@@ -202,6 +214,62 @@ async function searchBingImages(query, count = 10) {
     return [...goodUrls, ...normalUrls].slice(0, count);
   } catch (e) {
     console.log(`  [bing] ${e.message?.substring(0, 60)}`);
+    return [];
+  }
+}
+
+/**
+ * DuckDuckGo Images 搜图 — 解析 DDG 图片搜索结果页提取原图 URL
+ */
+async function searchDuckDuckGoImages(query, count = 10) {
+  try {
+    const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
+    const res = await httpGet(url, 15000, {
+      'Accept': 'text/html,*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    });
+    const body = res.body.toString('utf8');
+    const urls = new Set();
+    const matches = body.match(/https?:\/\/[^"'\s<>\]]+\.(?:png|jpg|jpeg|webp)/gi);
+    if (matches) {
+      for (const m of matches) {
+        if (m.includes('duckduckgo.com') || m.includes('favicon') || isBadDomain(m)) continue;
+        urls.add(m);
+      }
+    }
+    const arr = [...urls].slice(0, count);
+    console.log(`  [ddg] 提取 ${arr.length} 个`);
+    return arr;
+  } catch (e) {
+    console.log(`  [ddg] ${e.message?.substring(0, 60)}`);
+    return [];
+  }
+}
+
+/**
+ * Google Images 搜图 — 解析 Google 图片搜索结果页
+ */
+async function searchGoogleImages(query, count = 10) {
+  try {
+    const url = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`;
+    const res = await httpGet(url, 15000, {
+      'Accept': 'text/html,*/*',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    });
+    const body = res.body.toString('utf8');
+    const urls = new Set();
+    const matches = body.match(/https?:\/\/[^"'\s<>\]]+\.(?:png|jpg|jpeg|webp)/gi);
+    if (matches) {
+      for (const m of matches) {
+        if (m.includes('google.com') || m.includes('gstatic.com') || m.includes('favicon') || isBadDomain(m)) continue;
+        urls.add(m);
+      }
+    }
+    const arr = [...urls].slice(0, count);
+    console.log(`  [google] 提取 ${arr.length} 个`);
+    return arr;
+  } catch (e) {
+    console.log(`  [google] ${e.message?.substring(0, 60)}`);
     return [];
   }
 }
@@ -418,252 +486,6 @@ async function searchWikiPages(wikiDomain, query) {
     return [];
   }
 }
-
-// ════════════════════════ 图片处理 ════════════════════════
-
-/**
- * 调用 Python rembg CLI 移除图片背景
- * rembg i input.png output.png
- * @param {string} inputPath - 输入图片路径
- * @param {string} outputPath - 输出图片路径
- * @returns {boolean} 是否成功
- */
-function removeBackground(inputPath, outputPath) {
-  try {
-    execSync(`rembg i "${inputPath}" "${outputPath}"`, {
-      stdio: 'pipe',
-      timeout: 30000, // rembg 模型已预热，30 秒足够
-    });
-    return fs.existsSync(outputPath) && fs.statSync(outputPath).size > 500;
-  } catch (e) {
-    console.log(`    [rembg] ${e.message?.substring(0, 80)}`);
-    return false;
-  }
-}
-
-/**
- * 从 URL 下载原图，rembg 抠底，sharp 缩放为 500×500 透明 PNG
- * @param {string} imageUrl - 原图 URL
- * @param {string} outputPath - 最终输出路径
- * @returns {Promise<boolean>} 是否成功
- */
-async function downloadAndProcess(imageUrl, outputPath) {
-  const tmpDir = path.dirname(outputPath);
-  const tmpRaw = path.join(tmpDir, '_tmp_raw_' + Date.now() + '.png');
-  try {
-    // 1. 下载原图 — 加 Referer + wiki 友好 UA 避免 CDN/图床 403
-    const urlObj = new URL(imageUrl);
-    const referer = `${urlObj.protocol}//${urlObj.hostname}/`;
-    const wikiUA = 'CursedMinesweeper/1.0 (bot; image resource collection)';
-    const buf = (await httpGet(imageUrl, 20000, {
-      'Referer': referer,
-      'User-Agent': wikiUA,
-    })).body;
-    if (!buf || buf.length < 200) {
-      console.log(`    [dl] 图片太小或下载失败 (${buf ? buf.length : 0} bytes)`);
-      return false;
-    }
-    fs.writeFileSync(tmpRaw, buf);
-
-    // 1.5 尺寸与比例检查：过滤横幅/banner/wiki标志/截图等非物品图
-    let rawW = 0, rawH = 0;
-    try {
-      const rawMeta = await sharp(tmpRaw).metadata();
-      rawW = rawMeta.width || 0;
-      rawH = rawMeta.height || 0;
-      // 任一边 < 128px → 太模糊，丢弃（Minecraft 图标原生 160px，需接受 128+）
-      if (rawW < 128 || rawH < 128) {
-        console.log(`    [skip] 原图太小 (${rawW}x${rawH})`);
-        try { fs.unlinkSync(tmpRaw); } catch {}
-        return false;
-      }
-      // 极端宽高比（> 3:1 或 < 1:3）→ 很可能是 banner/截图界面/logo带文字，丢弃
-      if (rawW > 0 && rawH > 0) {
-        const ratio = rawW / rawH;
-        if (ratio > 3 || ratio < 1/3) {
-          console.log(`    [skip] 宽高比异常 (${rawW}x${rawH}, ratio=${ratio.toFixed(2)})，非物品图`);
-          try { fs.unlinkSync(tmpRaw); } catch {}
-          return false;
-        }
-      }
-    } catch {
-      // sharp 解析失败（非图片格式）
-      try { fs.unlinkSync(tmpRaw); } catch {}
-      return false;
-    }
-
-    // 2. rembg 抠底 — 尝试，但失败不致命，保留原图缩放
-    let sourceForResize = tmpRaw; // 默认用原图
-    const tmpRemoved = path.join(tmpDir, '_tmp_removed_' + Date.now() + '.png');
-    const rembgOk = removeBackground(tmpRaw, tmpRemoved);
-    if (rembgOk) {
-      sourceForResize = tmpRemoved; // 抠底成功，用抠底后的图
-    } else {
-      // rembg 失败：直接用原图 sharp 缩放（多数 Wiki 图本身已是透明 PNG）
-      try { fs.unlinkSync(tmpRemoved); } catch {}
-    }
-
-    // 3. sharp 缩放为 500×500 透明 PNG
-    await sharp(sourceForResize)
-      .resize(ICON_SIZE, ICON_SIZE, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      })
-      .png()
-      .toFile(outputPath);
-
-    // 清理临时文件
-    if (sourceForResize !== tmpRaw) try { fs.unlinkSync(sourceForResize); } catch {}
-    try { fs.unlinkSync(tmpRaw); } catch {}
-
-    // 4. 质量门禁：拒绝空白图、残影图、纯背景图
-    if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size < 500) return false;
-    try {
-      const finalMeta = await sharp(outputPath).metadata();
-      if (fs.statSync(outputPath).size < 5000) {
-        console.log(`    [reject] 文件过小 (${fs.statSync(outputPath).size} bytes)，疑似空白图`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-
-      // 读取 raw RGBA 像素
-      const { data, info } = await sharp(outputPath)
-        .ensureAlpha()
-        .raw()
-        .toBuffer({ resolveWithObject: true });
-      const totalPixels = info.width * info.height;
-      const stride = info.width * 4;
-
-      // ── 统计不透明像素占比 ──
-      let opaque = 0;
-      for (let k = 3; k < data.length; k += 4) {
-        if (data[k] > 20) opaque++;
-      }
-      const opaqueRatio = opaque / totalPixels;
-      if (opaqueRatio < 0.05) {
-        console.log(`    [reject] 不透明像素仅 ${(opaqueRatio * 100).toFixed(1)}%，几乎空白`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-      if (opaqueRatio > 0.95 && !rembgOk) {
-        console.log(`    [reject] 不透明像素 ${(opaqueRatio * 100).toFixed(1)}%，原图未抠底，疑似带UI/文字的截图`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-
-      // ── 边缘密度 + 皮肤色占比 + 颜色噪声 ──
-      // 三项指标综合判断：文字/实物/人物/风景 vs 游戏渲染物品
-      let edgePixels = 0;
-      let skinPixels = 0;       // 肤色像素（暖色区间）
-      let noiseSum = 0;         // 像素间颜色差累积（照片噪声高）
-      let opaqueForStats = 0;
-
-      // 采样优化：步进 2 像素，速度 4x
-      const STEP = 2;
-      for (let y = STEP; y < info.height - STEP; y += STEP) {
-        for (let x = STEP; x < info.width - STEP; x += STEP) {
-          const i = y * stride + x * 4;
-          if (data[i + 3] < 30) continue; // 透明像素跳过
-          opaqueForStats++;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-
-          // 边缘强度（Sobel 简易版：用上下左右邻近像素差）
-          const iUp = (y - STEP) * stride + x * 4;
-          const iLeft = y * stride + (x - STEP) * 4;
-          const gUp = 0.299 * data[iUp] + 0.587 * data[iUp + 1] + 0.114 * data[iUp + 2];
-          const gLeft = 0.299 * data[iLeft] + 0.587 * data[iLeft + 1] + 0.114 * data[iLeft + 2];
-          const gCur = 0.299 * r + 0.587 * g + 0.114 * b;
-          const mag = Math.sqrt((gCur - gUp) ** 2 + (gCur - gLeft) ** 2);
-          if (mag > 25) edgePixels++;
-
-          // 皮肤色调检测：RGB 暖色区间 (r>g>b, r-b>15, r>95, g>40, b>20)
-          if (r > 95 && g > 40 && b > 20 && r > g && g > b && (r - b) > 15) {
-            skinPixels++;
-          }
-
-          // 颜色噪声：相邻像素颜色差的平方和（照片噪声远高于游戏渲染）
-          const dr = data[i + 4] - r, dg = data[i + 5] - g, db = data[i + 6] - b;
-          noiseSum += dr * dr + dg * dg + db * db;
-        }
-      }
-
-      const edgeRatio = opaqueForStats > 0 ? edgePixels / opaqueForStats : 0;
-      const skinRatio = opaqueForStats > 0 ? skinPixels / opaqueForStats : 0;
-      const noiseAvg = opaqueForStats > 0 ? Math.sqrt(noiseSum / opaqueForStats) : 0;
-
-      // 门禁规则（OR 关系，命中任一即拒绝）：
-      //   文字/UI图：边缘密度 > 50%（正常游戏物品渲染 5-45%）
-      //   人物图：肤色占比 > 40%
-      //   实物照片：颜色噪声 > 70（游戏渲染通常 < 60，真实照片 80-150+）
-      //   风景图：边缘密度 < 6% 且噪声 > 45
-
-      if (edgeRatio > 0.50) {
-        console.log(`    [reject] 边缘密度 ${(edgeRatio * 100).toFixed(1)}%，疑似文字/标语/UI图`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-      if (skinRatio > 0.40) {
-        console.log(`    [reject] 肤色占比 ${(skinRatio * 100).toFixed(1)}%，疑似人物/肖像图`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-      if (noiseAvg > 70) {
-        console.log(`    [reject] 颜色噪声 ${noiseAvg.toFixed(0)}，疑似实物照片`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-      if (edgeRatio < 0.06 && noiseAvg > 45) {
-        console.log(`    [reject] 低边缘+高噪声 (边缘${(edgeRatio*100).toFixed(1)}% 噪声${noiseAvg.toFixed(0)})，疑似风景图`);
-        try { fs.unlinkSync(outputPath); } catch {}
-        return false;
-      }
-    } catch {
-      // sharp 读取失败则直接接受（可能是罕见格式）
-    }
-
-    return true;
-  } catch (e) {
-    console.log(`    [process] ${e.message?.substring(0, 80)}`);
-    try { fs.unlinkSync(tmpRaw); } catch {}
-    return false;
-  }
-}
-
-/**
- * 降级方案：对已有的 64×64 图标执行 rembg 抠底 + sharp upscale 到 500×500
- * @param {string} existingPngPath - 已有图标的路径
- * @param {string} outputPath - 输出路径
- * @returns {Promise<boolean>} 是否成功
- */
-async function upscaleExisting(existingPngPath, outputPath) {
-  if (!fs.existsSync(existingPngPath)) return false;
-  try {
-    // 先用 rembg 抠底（如果原图有背景）
-    const tmpDir = path.dirname(outputPath);
-    const tmpRemoved = path.join(tmpDir, '_tmp_upscale_' + Date.now() + '.png');
-    const ok = removeBackground(existingPngPath, tmpRemoved);
-
-    // 如果 rembg 失败，直接使用原图
-    const sourcePath = ok ? tmpRemoved : existingPngPath;
-
-    await sharp(sourcePath)
-      .resize(ICON_SIZE, ICON_SIZE, {
-        fit: 'contain',
-        background: { r: 0, g: 0, b: 0, alpha: 0 },
-      })
-      .png()
-      .toFile(outputPath);
-
-    // 清理临时文件
-    try { if (ok) fs.unlinkSync(tmpRemoved); } catch {}
-
-    return fs.existsSync(outputPath) && fs.statSync(outputPath).size > 500;
-  } catch (e) {
-    console.log(`    [upscale] ${e.message?.substring(0, 80)}`);
-    return false;
-  }
-}
-
 // ════════════════════════ 主流程 ════════════════════════
 
 async function main() {
@@ -681,12 +503,15 @@ async function main() {
   // 解析所有宝物条目
   const fullItems = dbRows[0].values.map(r => {
     const slug = (r[5] || '').replace('/icons/', '').replace('.png', '');
-    return { slug, name: r[2], nameEn: r[3] || r[2], ip: r[4] || '' };
+    return { slug, name: r[2], nameEn: r[3] || r[2], ip: r[4] || '', rows: r[0], cols: r[1] };
   });
 
-  // 若指定了 --slugs=，从全集中筛选目标条目（避免 OOM）
-  if (SLUGS_FILTER && SLUGS_FILTER.length > 0) {
-    console.log(`[fetch-real-icons v2.0] 仅处理指定宝物: ${SLUGS_FILTER.join(', ')}`);
+  // 若指定了 --coords=，按 rows-cols 坐标精确筛选（比 slug 更可靠，避免占位图 slug 碰撞）
+  if (COORDS_FILTER && COORDS_FILTER.length > 0) {
+    console.log(`[fetch-real-icons v3.0] 仅处理指定坐标: ${COORDS_FILTER.join(', ')}`);
+    allItems = fullItems.filter(item => COORDS_FILTER.includes(`${item.rows}-${item.cols}`));
+  } else if (SLUGS_FILTER && SLUGS_FILTER.length > 0) {
+    console.log(`[fetch-real-icons v3.0] 仅处理指定宝物: ${SLUGS_FILTER.join(', ')}`);
     allItems = fullItems.filter(item => SLUGS_FILTER.includes(item.slug));
   } else {
     allItems = fullItems;
@@ -695,94 +520,25 @@ async function main() {
   fs.mkdirSync(RESOURCE_ICONS, { recursive: true });
   fs.mkdirSync(PUBLIC_ICONS, { recursive: true });
 
-  const results = { success_src: 0, success_upscale: 0, skipped: 0, failed: 0, dups: 0 };
+  const results = { searched: 0, skipped: 0, failed: 0 };
   const items = allItems.slice(START, Math.min(END, allItems.length));
-
-  // ═══════════ 图片去重：跨批次全局——不同宝物不得共用相同图片 ═══════════
-  // 持久化注册表（跨 execSync 调用共享，避免 auto-fetch 逐件调用时重复）
-  const HASH_REG = path.join(__dirname, '_icon_hashes.json');
-
-  /** 计算文件 MD5 哈希，用于去重 */
-  function fileMd5(fp) {
-    return crypto.createHash('md5').update(fs.readFileSync(fp)).digest('hex');
-  }
-
-  /**
-   * 从磁盘重新加载全部已知哈希，返回 Set。
-   * 每次检查前重新读取，消除并行进程间的竞态：
-   * 启动时加载快照 → 进程 A 写 hash → 进程 B 检查时看不到 → 同一图片分配给两个宝物。
-   */
-  function loadFreshHashes() {
-    const seen = new Set();
-    try {
-      const reg = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8'));
-      for (const hlist of Object.values(reg)) {
-        if (Array.isArray(hlist)) for (const h of hlist) seen.add(h);
-      }
-    } catch {}
-    return seen;
-  }
-
-  /**
-   * 将新图片哈希写入注册表（原子化：读→合并→写，消除并行覆写竞态）
-   * 并行进程先读取最新文件，合并本次新增 hash，再整体写入。
-   */
-  function saveHash(slug, h) {
-    try {
-      // 读-改-写循环（最多重试 3 次，应对极端并行写入冲突）
-      for (let retry = 0; retry < 3; retry++) {
-        let reg = {};
-        try { reg = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8')); } catch {}
-        if (!reg[slug]) reg[slug] = [];
-        if (!reg[slug].includes(h)) {
-          reg[slug].push(h);
-          fs.writeFileSync(HASH_REG, JSON.stringify(reg, null, 2), 'utf-8');
-          // 写入后验证：重新读取确认我们的 hash 在文件中（防并行覆写）
-          const verify = JSON.parse(fs.readFileSync(HASH_REG, 'utf-8'));
-          if ((verify[slug] || []).includes(h)) return; // 写入成功
-        } else {
-          return; // 已存在，无需写入
-        }
-      }
-      // 重试耗尽仍失败（极端情况），追加写入不丢数据
-      console.log(`    [hash] 写入重试耗尽，追加写入 ${h.substring(0, 8)}`);
-      fs.appendFileSync(HASH_REG, '\n', 'utf-8');
-      // 最坏情况：本次 hash 未持久化，但至少不丢其他进程的数据
-    } catch (e) {
-      console.log(`    [hash] 写入异常: ${e.message?.substring(0, 60)}`);
-    }
-  }
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
 
-    const globalIdx = START + i;
+    // 跳过已有有效图标的宝物
     const filename = `${item.slug}.png`;
     const resPath = path.join(RESOURCE_ICONS, filename);
-    const pubPath = path.join(PUBLIC_ICONS, filename);
-
-    // 检查是否已有 500×500 有效图标（幂等重跑）
     if (fs.existsSync(resPath) && fs.statSync(resPath).size > 1000) {
-      try {
-        const meta = await sharp(resPath).metadata();
-        if (meta.width >= ICON_SIZE && meta.height >= ICON_SIZE) {
-          // 已满足要求，同步到 public
-          if (!fs.existsSync(pubPath) || fs.statSync(pubPath).size < 1000) {
-            fs.copyFileSync(resPath, pubPath);
-          }
-          results.skipped++;
-          continue;
-        }
-      } catch {
-        // 损坏文件，走重新下载流程
-      }
+      results.skipped++;
+      continue;
     }
 
-    const marker = `[${globalIdx + 1}/${allItems.length}]`;
+    const marker = `[${START + i + 1}/${allItems.length}]`;
     console.log(`${marker} ${item.name} (${item.nameEn}) [${item.ip}]`);
 
     /** 从 source_ip 提取游戏中文名和英文缩写，用于精确搜索 */
-    const { gameCn, gameEn } = (() => {
+    let { gameCn, gameEn } = (() => {
       if (!item.ip) return { gameCn: '', gameEn: '' };
       // source_ip 格式: "英文缩写 中文游戏名" 或纯中文名 或纯英文缩写
       const parts = item.ip.split(' ');
@@ -795,6 +551,19 @@ async function main() {
       if (firstIsEn) return { gameCn: '', gameEn: parts[0] };
       return { gameCn: item.ip, gameEn: '' };
     })();
+
+    // 游戏缩写 → 完整中文名映射，确保搜索词精准（如 "er" → "艾尔登法环"）
+    const GAME_ABBR_MAP = {
+      'er':  { cn: '艾尔登法环', en: 'Elden Ring' },
+      'ern': { cn: '艾尔登法环', en: 'Elden Ring' },
+    };
+    if (GAME_ABBR_MAP[gameEn]) {
+      const full = GAME_ABBR_MAP[gameEn];
+      if (!gameCn || !gameCn.startsWith('艾尔登')) {
+        gameCn = full.cn;
+      }
+      gameEn = full.en;
+    }
 
     // 构建精准搜索词：宝物名 + 游戏名
     const searchCnBase = gameCn ? `${item.name} ${gameCn}` : item.name;
@@ -871,84 +640,87 @@ async function main() {
     }
 
     // ──── 2. Bing Images 回退（Wiki 候选不足 5 张时触发）────
+    // 只搜物品渲染图：transparent png + 负向排除 logo/封面/截图/海报/带字图
     if (candidateUrls.size < 5) {
       const ctx = gameEn || (gameCn || '').split(/[\s]+/).filter(Boolean)[0] || '';
-      // 英文搜索：引号防拆词，"video game" 排除实物
-      const bQ1 = `"${item.nameEn}" ${ctx} video game item render transparent`.trim();
-      console.log(`  → Bing: ${bQ1}`);
+      // 负向排除词：排除游戏logo、封面、壁纸、截图、海报、标题图
+      const noLogo = '-logo -cover -wallpaper -box -art -banner -poster -title -screenshot -hd -4k';
+      const bQ1 = IS_RETRY
+        ? `${item.nameEn} ${ctx} game item icon transparent png ${noLogo}`.trim()
+        : `"${item.nameEn}" ${ctx} game item render transparent png ${noLogo}`.trim();
+      console.log(`  → Bing${IS_RETRY ? ' [重搜]' : ''}: ${bQ1}`);
       const b1 = await searchBingImages(bQ1, 10);
       for (const u of b1) candidateUrls.add(u);
 
       // 中文搜索（兜底）：双引号强制不分词 + "游戏道具" 标签排除实物
       if (candidateUrls.size < 5 && item.name && item.name !== item.nameEn) {
-        const bQ2 = `"${item.name}" ${gameCn || ''} 游戏道具`.trim();
-        console.log(`  → BingCN: ${bQ2}`);
+        const bQ2 = IS_RETRY
+          ? `${item.name} ${gameCn || ''} 游戏道具 图标 png ${noLogo}`.trim()
+          : `"${item.name}" ${gameCn || ''} 游戏道具 图标 png ${noLogo}`.trim();
+        console.log(`  → BingCN${IS_RETRY ? ' [重搜]' : ''}: ${bQ2}`);
         const b2 = await searchBingImages(bQ2, 10);
         for (const u of b2) candidateUrls.add(u);
       }
     }
 
+    // ──── 3. DuckDuckGo Images 回退（Bing 候选不足 5 张时触发）────
+    if (candidateUrls.size < 5) {
+      const ctx = gameEn || (gameCn || '').split(/[\s]+/).filter(Boolean)[0] || '';
+      const noLogo = '-logo -cover -wallpaper -art -banner -poster -screenshot';
+      const dQ = IS_RETRY
+        ? `${item.nameEn} ${ctx} game item icon transparent png ${noLogo}`.trim()
+        : `"${item.nameEn}" ${ctx} game item render png ${noLogo}`.trim();
+      console.log(`  → DDG${IS_RETRY ? ' [重搜]' : ''}: ${dQ}`);
+      const d1 = await searchDuckDuckGoImages(dQ, 10);
+      for (const u of d1) candidateUrls.add(u);
+    }
+
+    // ──── 4. Google Images 回退（DDG 候选仍不足 5 张时触发）────
+    if (candidateUrls.size < 5) {
+      const ctx = gameEn || (gameCn || '').split(/[\s]+/).filter(Boolean)[0] || '';
+      const noLogo = '-logo -cover -wallpaper -box -art -banner -poster -title -screenshot -hd';
+      const gQ = IS_RETRY
+        ? `${item.nameEn} ${ctx} game item icon transparent png ${noLogo}`.trim()
+        : `"${item.nameEn}" ${ctx} game item render png ${noLogo}`.trim();
+      console.log(`  → Google${IS_RETRY ? ' [重搜]' : ''}: ${gQ}`);
+      const g1 = await searchGoogleImages(gQ, 10);
+      for (const u of g1) candidateUrls.add(u);
+    }
+
     console.log(`  → 候选总数: ${candidateUrls.size}`);
 
-    // 阶段 2：逐个下载，攒够 5 张即停；同一批次内不同宝物图片绝不重复
-    let downloaded = 0;
-    const arr = [...candidateUrls];
-    for (let j = 0; j < arr.length && downloaded < 5; j++) {
-      const candPath = path.join(RESOURCE_ICONS, `${item.slug}_${downloaded + 1}.png`);
-      const ok = await downloadAndProcess(arr[j], candPath);
-      if (ok) {
-        // 计算 MD5，每次从磁盘重新加载全部已知哈希，消除并行进程间的竞态
-        const h = fileMd5(candPath);
-        if (loadFreshHashes().has(h)) {
-          try { fs.unlinkSync(candPath); } catch {}
-          results.dups++;
-          console.log(`    🔄 与已有宝物图片重复，跳过`);
-          continue; // 不增加 downloaded，不复制到 public，继续试下一张
-        }
-        // 通过去重：先写入哈希注册表（读-改-写，防并行覆写），再复制文件
-        saveHash(item.slug, h);
-        downloaded++;
-        console.log(`    ✅ 候选 ${downloaded}/5`);
-        // 第一张同时也是默认图标
-        if (downloaded === 1) {
-          fs.copyFileSync(candPath, resPath);
-          fs.copyFileSync(candPath, pubPath);
-          // 候选图也同步到 public/icons 供 Admin 面板展示
-          const pubCandPath = path.join(PUBLIC_ICONS, `${item.slug}_${downloaded}.png`);
-          fs.copyFileSync(candPath, pubCandPath);
-        } else {
-          // 候选图同步到 public/icons 供 Admin 面板展示
-          const pubCandPath = path.join(PUBLIC_ICONS, `${item.slug}_${downloaded}.png`);
-          fs.copyFileSync(candPath, pubCandPath);
-        }
+    // ═══════════ v3.0：只收集 URL 不下载，输出 CANDIDATES JSON 到 stdout 供父进程读取 ═══════════
+    const candidates = [];
+    for (const u of candidateUrls) {
+      // 过滤动图：跳过 .gif 和 animated .webp（Wiki/Bing 图标只需要静态图）
+      const lower = u.toLowerCase();
+      if (lower.endsWith('.gif') || lower.includes('animated') || lower.includes('_gif_')) continue;
+      // 过滤之前出现过的旧 URL（重搜时排除，防反反复复返回相同候选）
+      if (EXCLUDE_URLS.size > 0 && EXCLUDE_URLS.has(u)) { console.log(`    ⏭ 排除旧图: ${u.substring(0, 80)}...`); continue; }
+      let source = 'bing';
+      // 判断 URL 来源：Wiki 域名 → wiki，搜索引擎 → 对应引擎名
+      if (u.includes('fandom.com') || u.includes('wiki.gg') || u.includes('wikia.com') || u.includes('gamepedia.com') || u.includes('wikipedia.org') || u.includes('stardewvalleywiki') || u.includes('rimworldwiki') || u.includes('bulbapedia') || u.includes('minecraft.wiki') || u.includes('hollowknight.wiki')) {
+        source = 'wiki';
       }
+      candidates.push({ url: u, source });
     }
+    // 限制最多 10 个候选，避免 JSON 过大
+    const limited = candidates.slice(0, 10);
 
-    if (downloaded > 0) {
-      results.success_src += downloaded;
-      console.log(`    📦 完成: ${downloaded} 张候选`);
-      continue;
-    }
+    // 输出到 stdout：CANDIDATES= 开头的 JSON 行，供 admin.ts stepAutoFetch 解析
+    process.stdout.write(`CANDIDATES=${JSON.stringify({ slug: item.slug, rows: item.rows, cols: item.cols, name: item.name, nameEn: item.nameEn, candidates: limited })}\n`);
 
-    // 全部引擎无结果：降级 upscale 已有图标
-    const oldPaths = [pubPath, resPath];
-    let existingPath = null;
-    for (const p of oldPaths) {
-      if (fs.existsSync(p) && fs.statSync(p).size > 500) { existingPath = p; break; }
+    if (limited.length > 0) {
+      results.searched++;
+      console.log(`    📦 收集 ${limited.length} 个候选 URL`);
+    } else {
+      console.log(`    ❌ 无可用候选`);
+      results.failed++;
     }
-    if (existingPath) {
-      console.log(`  → 降级：处理已有图标...`);
-      const ok = await upscaleExisting(existingPath, resPath);
-      if (ok) { console.log(`    ✅ upscale 成功`); results.success_upscale++; fs.copyFileSync(resPath, pubPath); continue; }
-    }
-
-    // 全灭
-    console.log(`    ❌ 无可用图标`);
-    results.failed++;
   }
 
-  console.log(`\n[fetch-real-icons v2.0] 完成`);
-  console.log(`  下载: ${results.success_src} | upscale: ${results.success_upscale} | 跳过: ${results.skipped} | 重复: ${results.dups} | 失败: ${results.failed}`);
+  console.log(`\n[fetch-real-icons v3.0] 完成`);
+  console.log(`  搜索: ${results.searched} | 跳过: ${results.skipped} | 失败: ${results.failed}`);
 }
 
 main().catch(e => {
