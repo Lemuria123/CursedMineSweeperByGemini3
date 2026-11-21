@@ -23,7 +23,7 @@ export const DifficultySelector: React.FC<Props> = ({ activeName, onChange, opti
   const { t } = useTranslation();
   // 竖排贴在棋盘左边。不再套卡片，三个按钮本身就是控件
   return (
-    <div className="flex flex-col gap-2 shrink-0">
+    <div className="flex flex-col gap-[var(--diff-gap)] shrink-0">
       {options.map((opt) => {
         const isActive = activeName === opt.name;
         const label = t(`difficulty.${opt.name}`, opt.name);

@@ -25,39 +25,40 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, isPrayerFailu
       <motion.div
         initial={{ scale: 0.8, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
-        className="bg-slate-900 border-2 border-amber-900/50 rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative overflow-hidden"
+        data-result={status}
+        className="skin-result border-2 rounded-2xl p-8 max-w-sm w-full shadow-2xl text-center relative overflow-hidden"
       >
         {isAced && (
-            <div className="absolute inset-0 bg-gradient-to-t from-amber-500/10 via-transparent to-transparent pointer-events-none" />
+            <div className="result-ace-glow absolute inset-0 pointer-events-none" />
         )}
 
         <div className="relative mx-auto mb-6 flex items-center justify-center">
             <motion.div
-                className={`w-20 h-20 rounded-full flex items-center justify-center ${isWin ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}
+                className="result-icon w-20 h-20 rounded-full flex items-center justify-center"
             >
                 {isWin ? <Trophy size={40} /> : <Bomb size={40} />}
                 {isAced && (
-                    <div className="absolute -top-2 -right-2 bg-yellow-400 text-yellow-900 p-2 rounded-full shadow-lg border-2 border-slate-800">
+                    <div className="result-crown absolute -top-2 -right-2 p-2 rounded-full shadow-lg border-2">
                         <Crown size={16} fill="currentColor" />
                     </div>
                 )}
             </motion.div>
         </div>
 
-        <h2 className="text-3xl font-extrabold text-white mb-2">
+        <h2 className="text-3xl font-extrabold mb-2">
         {isWin ? (isAced ? t('modal.pureVictory') : t('modal.youWon')) : t('modal.gameOver')}
         </h2>
 
         <div className="flex flex-wrap gap-2 justify-center mb-4 min-h-[24px]">
             {isAced && (
-            <span className="inline-flex items-center gap-1 bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg">
+            <span className="result-ace-badge inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold shadow-lg">
                 <Sparkles size={12} fill="currentColor" /> {t('modal.aced')}
             </span>
             )}
         </div>
 
         {/* 结束说明与下方「查看棋盘」同一字号（text-base），不再用更小的 text-sm */}
-        <p className="text-slate-400 mb-6 text-base leading-relaxed">
+        <p className="result-muted mb-6 text-base leading-relaxed">
         {isWin
             ? t('modal.clearedWithPrayers', { count: prayersUsed })
             : (isPrayerFailure
@@ -69,10 +70,7 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, isPrayerFailu
         <div className="space-y-3 relative z-10">
             <button
             onClick={onRestart}
-            className={`
-                w-full py-3 rounded-xl font-bold text-white shadow-lg transition-transform active:scale-95 border-b-4
-                ${isWin ? 'bg-emerald-600 hover:bg-emerald-500 border-emerald-800' : 'bg-slate-600 hover:bg-slate-500 border-slate-800'}
-            `}
+            className="result-restart w-full py-3 rounded-xl font-bold shadow-lg transition active:scale-95 border-b-4"
             >
             {t('modal.playAgain')}
             </button>
@@ -80,7 +78,7 @@ export const Modal: React.FC<ModalProps> = ({ status, prayersUsed, isPrayerFailu
             {onClose && (
                 <button
                     onClick={onClose}
-                    className="w-full py-3 rounded-xl font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex items-center justify-center gap-2"
+                    className="result-muted result-view-board w-full py-3 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
                 >
                     <Eye size={18} />
                     {t('modal.viewBoard')}

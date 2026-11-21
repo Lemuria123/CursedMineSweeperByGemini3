@@ -369,21 +369,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <X size={20} />
         </button>
 
-        {/* 语言切换器：左上角紧凑按钮组，与关闭按钮对称 */}
-        <div className="absolute top-4 left-4 z-10 flex gap-1 bg-slate-800/80 p-1 rounded-lg border border-slate-700">
+        <div className="language-switch absolute top-4 left-4 z-10 flex text-base font-bold text-slate-400">
           <button
+            type="button"
+            lang="zh"
+            aria-pressed={i18n.resolvedLanguage === 'zh'}
             onClick={() => i18n.changeLanguage('zh')}
-            className={`px-2 py-1 rounded text-base font-bold transition-all ${
-              i18n.language === 'zh' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
+            className="px-2 py-1 transition-colors focus-visible:underline"
           >
             {t('settings.langZh')}
           </button>
           <button
+            type="button"
+            lang="en"
+            aria-pressed={i18n.resolvedLanguage === 'en'}
             onClick={() => i18n.changeLanguage('en')}
-            className={`px-2 py-1 rounded text-base font-bold transition-all ${
-              i18n.language === 'en' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
+            className="px-2 py-1 transition-colors focus-visible:underline"
           >
             {t('settings.langEn')}
           </button>
@@ -510,14 +511,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* 左边是难度，中间是棋盘，右边是加减雷和开始。不再套一层卡片，直接放在设置页底色上 */}
-        <div className="shrink-0">
-            <div className="flex items-center justify-center gap-3">
+        <div className="diff-preview-controls -mx-5 shrink-0">
+            <div className="flex items-center justify-center gap-[var(--diff-gap)]">
                 <DifficultySelector
                     activeName={activePreset}
                     onChange={handlePresetClick}
                     options={difficulties}
                 />
-                <div className="diff-preview-slot">
+                <div className="diff-preview-slot" style={{ '--diff-cols': cols } as React.CSSProperties}>
                     <div className="relative">
                         <DifficultyBoardPreview rows={rows} cols={cols} mines={mines} />
                         {/* 只留双向箭头，不画按钮底和边框。向右、向上变大，向左、向下变小 */}
@@ -535,7 +536,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </button>
                     </div>
                 </div>
-                <div className="flex flex-col items-center gap-2 shrink-0">
+                <div className="flex flex-col items-center gap-[var(--diff-gap)] shrink-0">
                     {/* 点一下改一颗，按住连发。touch-none 避免按住时把整页设置拖着滚 */}
                     <button
                         type="button"

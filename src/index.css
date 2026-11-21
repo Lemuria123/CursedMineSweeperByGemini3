@@ -246,6 +246,109 @@
 [data-skin="neon"] .skin-prayer-count { color: #fbbf24; }
 [data-skin="stone"] .skin-prayer-count { color: #f6d48a; }
 
+/* ---------- 结算弹窗 ---------- */
+.skin-result {
+  --result-panel: #0f172a;
+  --result-border: #492a1c;
+  --result-text: #fff;
+  --result-muted: #94a3b8;
+  --result-surface: #475569;
+  --result-win: #34d399;
+  --result-win-button: #047857;
+  --result-win-ink: #fff;
+  --result-loss: #f87171;
+  --result-ace: #facc15;
+  --result-ace-end: #f59e0b;
+  --result-ace-ink: #422006;
+  background-color: var(--result-panel);
+  border-color: var(--result-border);
+  color: var(--result-text);
+}
+
+[data-skin="abyss"] .skin-result {
+  --result-panel: #100818;
+  --result-border: #5b21b6;
+  --result-text: #faf5ff;
+  --result-muted: #d8b4fe;
+  --result-surface: #53358a;
+  --result-win: #c084fc;
+  --result-win-button: var(--result-win);
+  --result-win-ink: #240d3d;
+  --result-loss: #fca5a5;
+  --result-ace: #e9d5ff;
+  --result-ace-end: #f0abfc;
+  --result-ace-ink: #3b0764;
+}
+
+[data-skin="neon"] .skin-result {
+  --result-panel: #070c14;
+  --result-border: #0e7490;
+  --result-text: #ecfeff;
+  --result-muted: #a5f3fc;
+  --result-surface: #1f5274;
+  --result-win: #22d3ee;
+  --result-win-button: var(--result-win);
+  --result-win-ink: #042f3a;
+  --result-loss: #fb7185;
+  --result-ace: #67e8f9;
+  --result-ace-end: #f0abfc;
+  --result-ace-ink: #1e1b4b;
+}
+
+[data-skin="stone"] .skin-result {
+  --result-panel: #1c1610;
+  --result-border: #8a6a3e;
+  --result-text: #fff8ee;
+  --result-muted: #e6d3b4;
+  --result-surface: #6b5340;
+  --result-win: #e7c27a;
+  --result-win-button: var(--result-win);
+  --result-win-ink: #2a1c10;
+  --result-loss: #f0a8a0;
+  --result-ace: #f6d48a;
+  --result-ace-end: #e7bd79;
+  --result-ace-ink: #382511;
+}
+
+.result-muted { color: var(--result-muted); }
+.result-view-board:hover {
+  color: var(--result-text);
+  background-color: color-mix(in srgb, var(--result-surface) 45%, transparent);
+}
+
+.result-icon {
+  color: var(--result-loss);
+  background-color: color-mix(in srgb, currentColor 20%, transparent);
+}
+.skin-result[data-result="won"] .result-icon { color: var(--result-win); }
+
+.result-restart {
+  --result-button: var(--result-surface);
+  background-color: var(--result-button);
+  border-color: color-mix(in srgb, var(--result-button), var(--result-panel) 55%);
+  color: var(--result-text);
+}
+.skin-result[data-result="won"] .result-restart {
+  --result-button: var(--result-win-button);
+  color: var(--result-win-ink);
+}
+.result-restart:hover {
+  background-color: color-mix(in srgb, var(--result-button), white 8%);
+}
+
+.result-ace-glow {
+  background-image: linear-gradient(to top, color-mix(in srgb, var(--result-ace) 10%, transparent), transparent 55%);
+}
+.result-crown {
+  background-color: var(--result-ace);
+  border-color: var(--result-panel);
+  color: var(--result-ace-ink);
+}
+.result-ace-badge {
+  background-image: linear-gradient(to right, var(--result-ace), var(--result-ace-end));
+  color: var(--result-ace-ink);
+}
+
 /* ---------- 棋盘与格子 ---------- */
 [data-skin="abyss"] .skin-board {
   background-color: #14081f;
@@ -336,7 +439,7 @@
 /*
  * 设置页分两层，避免底色和前景糊在一起。
  * 弹窗本身是该界面的底：比棋盘、比输入框都更沉。
- * 输入框、语言条、行数面板是前景，明显亮一档。
+ * 输入框、行数面板是前景，明显亮一档。
  * 诅咒不覆盖，底仍是石板灰，前景仍是原来的深灰控件，和绿色格子分开。
  */
 [data-skin="abyss"] .skin-settings {
@@ -352,15 +455,18 @@
   border-color: #8a6a3e;
 }
 
+.language-switch { --language-active-color: #22c55e; }
+[data-skin="abyss"] .language-switch { --language-active-color: #c084fc; }
+[data-skin="neon"] .language-switch { --language-active-color: #22d3ee; }
+[data-skin="stone"] .language-switch { --language-active-color: #e7c27a; }
+.language-switch button[aria-pressed="true"] { color: var(--language-active-color); }
+
 /* 前景：输入框和加减按钮 */
 [data-skin="abyss"] .skin-settings .bg-slate-800 { background-color: #3c2760; }
-[data-skin="abyss"] .skin-settings .bg-slate-800\/80 { background-color: rgba(60, 39, 96, 0.92); }
 [data-skin="abyss"] .skin-settings .bg-slate-800\/50 { background-color: rgba(60, 39, 96, 0.55); }
 [data-skin="neon"] .skin-settings .bg-slate-800 { background-color: #1f6484; }
-[data-skin="neon"] .skin-settings .bg-slate-800\/80 { background-color: rgba(31, 100, 132, 0.92); }
 [data-skin="neon"] .skin-settings .bg-slate-800\/50 { background-color: rgba(31, 100, 132, 0.55); }
 [data-skin="stone"] .skin-settings .bg-slate-800 { background-color: #6b5340; }
-[data-skin="stone"] .skin-settings .bg-slate-800\/80 { background-color: rgba(107, 83, 64, 0.92); }
 [data-skin="stone"] .skin-settings .bg-slate-800\/50 { background-color: rgba(107, 83, 64, 0.55); }
 
 /* 前景里再凹进去的一块：难度条和行列区域 */
@@ -388,10 +494,9 @@
 
 /*
  * 设置页里两枚实心底按钮，底色和字色都跟着界面走。
- * 选中（语言、当前难度）用这套界面的魂火色当底。
+ * 当前难度用这套界面的魂火色当底。
  * 字不用纯白：亮底配同色系的深墨，深底才用浅字。这样方块标记（currentColor）也会一起变。
  * 确认（开始、保存昵称）用第二种颜色，和选中分开，避免整页只剩一个色。
- * 语言按钮的 emerald / amber 类写在按钮自己身上，所以 color 直接打在这两个类上，盖过 text-white。
  * 难度的绿底在按钮里面那一层，字色在外层按钮上，要用 :has 单独写。
  * 没选中的字和图标离开石板灰，改成该界面的浅色；诅咒的控件本来就是石板，灰字留着。
  */
@@ -506,7 +611,6 @@
  * 这里的长宽取它的 1/4：9 / 10 / 12px。底边原来是 4px，同样缩成 1px，
  * 否则 9px 的小格会被边框占掉一半。圆角 6px 缩成 1.5px。
  * 棋盘外框的 p-3（12px）和 border-4（4px）也按 1/4，变成 3px 和 1px。
- * 列数写在 data-cols 上，组件里不用内联样式。
  */
 .diff-preview-frame {
   width: max-content;
@@ -515,23 +619,30 @@
   border: 1px solid #14532d;
   border-radius: 4px;
 }
+.diff-preview-controls {
+  --diff-gap: 0.5rem;
+  container-type: inline-size;
+  padding-inline: var(--diff-gap);
+}
 /*
  * 左右按钮按困难棋盘（16 列 × 25 行）的外沿对齐。
  * 简单、中等比它小，格子在这块区域里居中，按钮不再往中间靠。
  * 拖得比困难更大时，区域跟着变大，按钮才向外让。
- * 外框是 padding 3px×2 加边框 1px×2，格缝 1px。
+ * 空间不足时缩小预览格，保留两列按钮和等距留白。
  */
 .diff-preview-slot {
-  --diff-cell: 9px;
+  --diff-cell-limit: 9px;
+  --diff-slot-cols: max(16, var(--diff-cols));
+  /* 预留两列 w-10 按钮、两处间距和 8px 外框，每列再扣掉 1px 格缝（最后一列无缝）。 */
+  --diff-cell: min(var(--diff-cell-limit), calc((100cqw - 2 * (2.5rem + var(--diff-gap)) - 7px) / var(--diff-slot-cols) - 1px));
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  min-width: calc(16 * var(--diff-cell) + 15px + 8px);
+  min-width: calc(var(--diff-slot-cols) * (var(--diff-cell) + 1px) + 7px);
   min-height: calc(25 * var(--diff-cell) + 24px + 8px);
 }
 .diff-preview {
-  --diff-cols: 9;
   display: grid;
   width: max-content;
   /* 对局格子外包了一层 1px 留白，缩到 1/4 后不到 1px。留 1px 缝，小格才不会糊成一块 */
@@ -552,26 +663,9 @@
   color: #991b1b;
 }
 @media (min-width: 640px) {
-  .diff-preview-slot { --diff-cell: 10px; }
+  .diff-preview-slot { --diff-cell-limit: 10px; }
 }
 @media (min-width: 768px) {
-  .diff-preview-slot { --diff-cell: 12px; }
+  .diff-preview-slot { --diff-cell-limit: 12px; }
 }
-.diff-preview[data-cols="8"] { --diff-cols: 8; }
-.diff-preview[data-cols="9"] { --diff-cols: 9; }
-.diff-preview[data-cols="10"] { --diff-cols: 10; }
-.diff-preview[data-cols="11"] { --diff-cols: 11; }
-.diff-preview[data-cols="12"] { --diff-cols: 12; }
-.diff-preview[data-cols="13"] { --diff-cols: 13; }
-.diff-preview[data-cols="14"] { --diff-cols: 14; }
-.diff-preview[data-cols="15"] { --diff-cols: 15; }
-.diff-preview[data-cols="16"] { --diff-cols: 16; }
-.diff-preview[data-cols="17"] { --diff-cols: 17; }
-.diff-preview[data-cols="18"] { --diff-cols: 18; }
-.diff-preview[data-cols="19"] { --diff-cols: 19; }
-.diff-preview[data-cols="20"] { --diff-cols: 20; }
-.diff-preview[data-cols="21"] { --diff-cols: 21; }
-.diff-preview[data-cols="22"] { --diff-cols: 22; }
-.diff-preview[data-cols="23"] { --diff-cols: 23; }
-.diff-preview[data-cols="24"] { --diff-cols: 24; }
-.diff-preview[data-cols="25"] { --diff-cols: 25; }
+.diff-preview-slot:has(.diff-preview[data-cols="25"]) { --diff-cell-limit: 12px; }
