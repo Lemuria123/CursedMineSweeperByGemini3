@@ -103,6 +103,9 @@ interface SignedClue {
   mines: number;
 }
 
+const MAX_SECOND_ROUND_PAIRS = 8192;
+const MAX_DERIVED_TERMS = 8;
+
 function cluesProveContradiction(clues: Equation[], groups: number[][]): boolean {
   const signed: SignedClue[] = [];
   const previousByGroup = groups.map(() => [] as Equation[]);
@@ -128,6 +131,60 @@ function cluesProveContradiction(clues: Equation[], groups: number[][]): boolean
 
   const low = new Int32Array(groups.length);
   const high = Int32Array.from(groups, group => group.length);
+  if (signedCluesContradict(signed, low, high)) return true;
+
+  const secondRound = deriveMoreClues(signed, groups.length);
+  return secondRound.length > 0 && signedCluesContradict([...signed, ...secondRound], low, high);
+}
+
+function deriveMoreClues(clues: SignedClue[], groupCount: number): SignedClue[] {
+  const derived: SignedClue[] = [];
+  const previousByGroup = Array.from({ length: groupCount }, () => [] as SignedClue[]);
+  const key = ({ positive, negative, mines }: SignedClue) =>
+    `${positive.join(',')}|${negative.join(',')}=${mines}`;
+  const known = new Set(clues.map(key));
+  let pairsLeft = MAX_SECOND_ROUND_PAIRS;
+
+  // Combine original clues and first-round differences only. Deduct one unit
+  // per candidate pair, even when it produces no usable equation.
+  for (const clue of clues) {
+    const terms = [...clue.positive, ...clue.negative];
+    const overlapping = new Set<SignedClue>();
+    for (const group of terms) {
+      for (const other of previousByGroup[group]) overlapping.add(other);
+      previousByGroup[group].push(clue);
+    }
+    for (const other of overlapping) {
+      if (pairsLeft === 0) return derived;
+      pairsLeft--;
+      for (const sign of [-1, 1]) {
+        const positive = sign === 1 ? other.positive : other.negative;
+        const negative = sign === 1 ? other.negative : other.positive;
+        // Require a cancellation and keep coefficients in {-1, 0, 1}.
+        if (!clue.positive.some(i => negative.includes(i)) &&
+            !clue.negative.some(i => positive.includes(i))) continue;
+        if (clue.positive.some(i => positive.includes(i)) ||
+            clue.negative.some(i => negative.includes(i))) continue;
+
+        const next: SignedClue = {
+          positive: [...clue.positive.filter(i => !negative.includes(i)),
+            ...positive.filter(i => !clue.negative.includes(i))].sort((a, b) => a - b),
+          negative: [...clue.negative.filter(i => !positive.includes(i)),
+            ...negative.filter(i => !clue.positive.includes(i))].sort((a, b) => a - b),
+          mines: clue.mines + sign * other.mines,
+        };
+        if (next.positive.length + next.negative.length > MAX_DERIVED_TERMS) continue;
+        const id = key(next);
+        if (known.has(id)) continue;
+        known.add(id);
+        derived.push(next);
+      }
+    }
+  }
+  return derived;
+}
+
+function signedCluesContradict(signed: SignedClue[], low: Int32Array, high: Int32Array): boolean {
   let changed: boolean;
   do {
     changed = false;

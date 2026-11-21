@@ -64,5 +64,38 @@
       "OOOOOO..OMMM...OFFOOOOOOF",
       "OOOOOOM.OO....MOOOOOFOFOF"
     ]
+  },
+  {
+    "seed": "25-25-133-1-0-1700000095767",
+    "drawsBefore": 1034,
+    "row": 14,
+    "col": 6,
+    "cells": [
+      "OO.....MM......OOOOOFOOOO",
+      "OOMM.M........MOFFOOOOOOF",
+      "OOO.OO....MM.M.OMOOOOOOOO",
+      "M...O.M.MOM..M...OFOOOOOO",
+      ".M.OMO.M..OOOOMOOOOOOOOOF",
+      "..MO..OMM.M...O.MOOOOOOOO",
+      ".MO...MMMM.MMM...OOFFOOOF",
+      "OM.M..OM....O..M.OOOFOOOO",
+      "O.O...M..M..O.M.OFM.OOOOO",
+      ".OM...M..M.M.OM.M..MFOFOO",
+      "O.O....M.M.MO..OOOOFFFOOF",
+      "OMO...M.M.OM...OOOFOOOOOO",
+      "..OM...M..OM..MOOOOOOFOOO",
+      ".O....M.OO..OOOFFOOOFOOOO",
+      "MOM..OMO.MOMOOOOOOOOOOOOO",
+      ".O.M.OO...M.OOOOFOFOOOOOO",
+      "..OOO.O..MOOFFOOOFOOOOOOF",
+      "M..M..MM..OOOOFFOOFOOOOOO",
+      "OOFM..OOO.OOOOFOOOOOOOFOO",
+      "OOO..MOOOMOOOOOOOOOOOOOOO",
+      "OOOMM.OOOMOOOOOFOFOOOOFOO",
+      "OOO...OOO.OOOOFFOOOOOOFFO",
+      ".M...MM..MOFOOOOOOOOFOOOO",
+      "OOMM.M..MO.OOFOOOFOOOOOOO",
+      "OO.M......MOOOOFOOOOOOOOO"
+    ]
   }
 ]
