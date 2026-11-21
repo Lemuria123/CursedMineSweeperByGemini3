@@ -2,19 +2,37 @@
 
 import express from 'express';
 import cors from 'cors';
+import { createHash } from 'node:crypto';
 import { v4 as uuid } from 'uuid';
 
-import { initDatabase, getDb, run, get, all, reloadFromDisk } from './db';
+import { initDatabase, run, get, all, reloadFromDisk } from './db';
 import { decrypt } from './crypto';
-import { verifySubmission } from './verify';
+import { isGameSubmission, verifySubmission } from './verify';
 import { GameSubmission } from './types';
 import { startAdmin } from './admin';
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
+function credentialHash(req: express.Request): string | null {
+  const token = req.get('Authorization')?.match(/^Bearer ([0-9a-f-]+)$/i)?.[1];
+  if (!token || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(token)) return null;
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function requireAccount(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const hash = credentialHash(req);
+  const account = hash && get<{ id: string }>('SELECT id FROM accounts WHERE credential_hash = ?', [hash]);
+  if (!account) {
+    res.status(401).json({ error: 'account credential required' });
+    return;
+  }
+  res.locals.accountId = account.id;
+  next();
+}
+
 // ── Init DB before starting ──
-async function start() {
+export async function start() {
   await initDatabase();
 
   // ── Health check ──
@@ -34,54 +52,67 @@ async function start() {
   // ── POST /api/auth — register or login ──
   app.post('/api/auth', (req, res) => {
     const { platform, platform_id } = req.body;
-    if (!platform || !platform_id) {
+    if (typeof platform !== 'string' || !platform || typeof platform_id !== 'string' || !platform_id) {
       return res.status(400).json({ error: 'platform and platform_id required' });
     }
+    const hash = credentialHash(req);
+    if (!hash) return res.status(401).json({ error: 'account credential required' });
 
-    const existing = get<{ id: string; nickname: string | null; created_at: number }>(
-      'SELECT id, nickname, created_at FROM accounts WHERE platform = ? AND platform_id = ?',
+    const existing = get<{ id: string; nickname: string | null; created_at: number; credential_hash: string | null }>(
+      'SELECT id, nickname, created_at, credential_hash FROM accounts WHERE platform = ? AND platform_id = ?',
       [platform, platform_id],
     );
 
+    const credentialOwner = get<{ id: string }>('SELECT id FROM accounts WHERE credential_hash = ?', [hash]);
+    if (credentialOwner && credentialOwner.id !== existing?.id) {
+      return res.status(409).json({ error: 'credential already in use' });
+    }
     if (existing) {
+      if (existing.credential_hash === null) {
+        // Existing browsers still hold their device ID. Bind a credential the first time they upgrade.
+        run('UPDATE accounts SET credential_hash = ? WHERE id = ?', [hash, existing.id]);
+      } else if (existing.credential_hash !== hash) {
+        return res.status(401).json({ error: 'invalid account credential' });
+      }
       return res.json({ account_id: existing.id, nickname: existing.nickname, created_at: existing.created_at });
     }
 
     const id = uuid();
     const now = Date.now();
-    run('INSERT INTO accounts (id, platform, platform_id, created_at) VALUES (?, ?, ?, ?)',
-      [id, platform, platform_id, now]);
+    run('INSERT INTO accounts (id, platform, platform_id, credential_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+      [id, platform, platform_id, hash, now]);
     return res.json({ account_id: id, nickname: null, created_at: now });
   });
 
   // ── GET /api/auth/:id — get player info ──
   app.get('/api/auth/:id', (req, res) => {
     const row = get<{ id: string; platform: string; nickname: string | null; created_at: number }>(
-      'SELECT * FROM accounts WHERE id = ?', [req.params.id],
+      'SELECT id, platform, nickname, created_at FROM accounts WHERE id = ?', [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'account not found' });
     res.json(row);
   });
 
   // ── PATCH /api/auth/:id/nickname — set nickname ──
-  app.patch('/api/auth/:id/nickname', (req, res) => {
+  app.patch('/api/auth/:id/nickname', requireAccount, (req, res) => {
+    if (req.params.id !== res.locals.accountId) return res.status(403).json({ error: 'account mismatch' });
     const { nickname } = req.body;
     if (!nickname || typeof nickname !== 'string' || nickname.trim().length === 0) {
       return res.status(400).json({ error: 'nickname required' });
     }
     const trimmed = nickname.trim().slice(0, 32);
-    const existing = get('SELECT id FROM accounts WHERE id = ?', [req.params.id]);
-    if (!existing) return res.status(404).json({ error: 'account not found' });
-
-    run('UPDATE accounts SET nickname = ? WHERE id = ?', [trimmed, req.params.id]);
+    run('UPDATE accounts SET nickname = ? WHERE id = ?', [trimmed, res.locals.accountId]);
     res.json({ ok: true, nickname: trimmed });
   });
 
   // ── GET /api/nonce — get a one-time submission nonce ──
-  app.get('/api/nonce', (req, res) => {
+  app.get('/api/nonce', requireAccount, (req, res) => {
     const nonce = uuid();
     const id = uuid();
-    const accountId = (req.query.account_id as string) || 'anonymous';
+    const accountId = res.locals.accountId;
+    if (req.query.account_id !== undefined && req.query.account_id !== accountId) {
+      return res.status(403).json({ error: 'account mismatch' });
+    }
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
 
     run('INSERT INTO submission_nonces (id, nonce, account_id, expires_at) VALUES (?, ?, ?, ?)',
@@ -91,27 +122,28 @@ async function start() {
   });
 
   // ── POST /api/submit — submit encrypted game data ──
-  app.post('/api/submit', (req, res) => {
+  app.post('/api/submit', requireAccount, (req, res) => {
     const { account_id, payload } = req.body;
-    if (!account_id || !payload) {
+    if (!account_id || typeof payload !== 'string' || !payload) {
       return res.status(400).json({ error: 'account_id and payload required' });
     }
+    if (account_id !== res.locals.accountId) return res.status(403).json({ error: 'account mismatch' });
 
     // 1. Decrypt
     let submission: GameSubmission;
     try {
       const plaintext = decrypt(payload);
-      submission = JSON.parse(plaintext);
+      const data: unknown = JSON.parse(plaintext);
+      if (!isGameSubmission(data)) return res.status(400).json({ error: 'invalid game data' });
+      submission = data;
     } catch (e: any) {
       return res.status(400).json({ error: 'decrypt failed', detail: e.message });
     }
 
     // 2. Validate nonce
-    if (!submission.nonce) {
-      return res.status(400).json({ error: 'missing nonce in payload' });
-    }
     const nonceRow = get<{ id: string; expires_at: number }>(
-      'SELECT id, expires_at FROM submission_nonces WHERE nonce = ?', [submission.nonce],
+      'SELECT id, expires_at FROM submission_nonces WHERE nonce = ? AND account_id = ?',
+      [submission.nonce, res.locals.accountId],
     );
     if (!nonceRow) {
       return res.status(400).json({ error: 'invalid or already used nonce' });
@@ -138,7 +170,7 @@ async function start() {
     run(
       'INSERT INTO records (account_id, rows, cols, mines, time_ms, game_data, validated, submitted_at, prayers_used, verify_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
-        account_id,
+        res.locals.accountId,
         submission.grid.rows,
         submission.grid.cols,
         submission.grid.mines,
@@ -211,15 +243,15 @@ async function start() {
 
   // ── Start ──
   const PORT = process.env.GAME_API_PORT ? parseInt(process.env.GAME_API_PORT) : 38001;
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`[game-api] listening on :${PORT}`);
   });
 
   // Also start admin panel on the same process (shared DB)
-  startAdmin();
+  return { server, admin: startAdmin() };
 }
 
-start().catch((e) => {
+if (require.main === module) start().catch((e) => {
   console.error('[game-api] failed to start:', e);
   process.exit(1);
 });

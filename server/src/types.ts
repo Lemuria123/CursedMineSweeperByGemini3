@@ -18,7 +18,7 @@ export interface GameAction {
 }
 
 export interface GameSubmission {
-  version: ReplayVersion;
+  version?: ReplayVersion;
   nonce: string;
   grid: GridConfig;
   mine_seed: string;   // deterministic mine layout seed

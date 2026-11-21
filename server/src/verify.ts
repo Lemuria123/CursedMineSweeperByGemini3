@@ -6,7 +6,7 @@
 // - Uses the client's seeded random stream and the recording's prayer rules.
 // - Validates: (1) action legality, (2) prayers match, (3) final state is won.
 
-import { CellData } from '../../shared/types';
+import { CellData, CURRENT_REPLAY_VERSION, type ReplayVersion } from '../../shared/types';
 import {
   revealCellLogic,
   getChordTargets,
@@ -15,11 +15,44 @@ import {
 import { deterministicPlaceMines, createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
 import { GameSubmission, GameAction, GridConfig, VerifyResult } from './types';
 
-export function createReplayBoard(grid: GridConfig, mineSeed: string, firstReveal: GameAction): CellData[][] | null {
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function integerBetween(value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
+export function isGameSubmission(value: unknown): value is GameSubmission {
+  if (!isObject(value) || !isObject(value.grid)) return false;
+  const { rows, cols, mines } = value.grid;
+  if (!integerBetween(rows, 1, 25) || !integerBetween(cols, 1, 25) ||
+      !integerBetween(mines, 1, rows * cols - 9)) return false;
+  if (value.version !== undefined && value.version !== 1 && value.version !== 2 &&
+      value.version !== 3 && value.version !== CURRENT_REPLAY_VERSION) return false;
+  if (typeof value.nonce !== 'string' || !value.nonce || typeof value.mine_seed !== 'string' ||
+      !integerBetween(value.prayers_used, 0) || !integerBetween(value.total_time_ms, 0)) return false;
+  const inGrid = (point: unknown) => isObject(point) &&
+    integerBetween(point.row, 0, rows - 1) && integerBetween(point.col, 0, cols - 1);
+  return Array.isArray(value.actions) && value.actions.length > 0 &&
+    value.actions.every((action: unknown, i: number) => {
+      if (!isObject(action) || !inGrid(action) || !integerBetween(action.ts, 0) ||
+          (action.prayed !== undefined && typeof action.prayed !== 'boolean')) return false;
+      if (i === 0) {
+        return action.type === 'first_reveal' && (action.initial_flags === undefined ||
+          (Array.isArray(action.initial_flags) && action.initial_flags.length <= rows * cols &&
+           action.initial_flags.every(inGrid)));
+      }
+      return action.initial_flags === undefined &&
+        (action.type === 'reveal' || action.type === 'flag' || action.type === 'chord');
+    });
+}
+
+export function createReplayBoard(grid: GridConfig, mineSeed: string, firstReveal: GameAction, version: ReplayVersion = 1): CellData[][] | null {
   const { row, col, initial_flags } = firstReveal;
   if (initial_flags !== undefined && !Array.isArray(initial_flags)) return null;
 
-  const board = deterministicPlaceMines(grid.rows, grid.cols, grid.mines, row, col, mineSeed);
+  const board = deterministicPlaceMines(grid.rows, grid.cols, grid.mines, row, col, mineSeed, version);
   for (const flag of initial_flags ?? []) {
     if (!flag || !Number.isInteger(flag.row) || !Number.isInteger(flag.col)) return null;
     if (flag.row === row && flag.col === col) return null;
@@ -66,7 +99,7 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
   }
 
   // ── Reconstruct mine layout ──
-  let board = createReplayBoard(gridConfig, mine_seed, firstAction);
+  let board = createReplayBoard(gridConfig, mine_seed, firstAction, version);
   if (!board) return { valid: false, reason: 'invalid initial flags' };
 
   // ── Game state ──

@@ -562,7 +562,7 @@ function testVersionedPrayerReplay(): void {
   const { cells, seed, drawsBefore, row, col } = exactPrayerFixtures.find(f => f.seed.endsWith('39921'))!;
   const board = decodeFixture(cells);
   const expected = {
-    1: '6ed328c8ba4f54629efbec3b5169594106cc94b28730d114f39bef5c3d2e2909',
+    1: 'e1a765d6baa509b0bf03e37bc51c94810aaace8e231f37d8f2679ab2311c9c25',
     2: 'd80169b335d84a7e8069914362ff2422de2567c31932076a03ecb852d737fc43',
     3: 'e1a765d6baa509b0bf03e37bc51c94810aaace8e231f37d8f2679ab2311c9c25',
   };

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { X, Bomb, Skull, AlertTriangle, Plus, Minus, MoveDiagonal2, Check } from 'lucide-react';
 import { useTranslation, Trans } from 'react-i18next';
@@ -144,6 +144,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   }, [isOpen, currentDifficulty]);
 
+  const focusNicknameInput = useCallback((input: HTMLInputElement | null) => {
+    input?.focus();
+    input?.select();
+  }, []);
+
+  const handleNicknameEdit = () => {
+    setNicknameInput(debugNickname ?? '');
+    setNicknameEditing(true);
+  };
+
   const handleNicknameSave = async () => {
     const trimmed = nicknameInput.trim();
     if (!trimmed) {
@@ -153,8 +163,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setNicknameSaving(true);
     setNicknameError('');
     try {
-      const { accountId } = await ensureAccount();
-      await setNickname(accountId, trimmed);
+      const { accountId, credential } = await ensureAccount();
+      await setNickname(accountId, trimmed, credential);
       setDebugNickname(trimmed);
       setNicknameEditing(false);
     } catch {
@@ -411,6 +421,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="space-y-2">
                     <input
                       type="text"
+                      ref={focusNicknameInput}
                       value={nicknameInput}
                       onChange={(e) => setNicknameInput(e.target.value.slice(0, 32))}
                       maxLength={32}
@@ -442,25 +453,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 ) : (
                   <p>
-                    {/* 已有昵称：保留 “Sorry, 昵称” 与修改入口 */}
                     {debugNickname ? (
-                      <>
-                        <span className="text-2xl font-black text-white tracking-tight">
-                          Sorry,&nbsp;{debugNickname}
-                        </span>
+                      <span className="text-2xl font-black text-white tracking-tight">
+                        Sorry,&nbsp;
                         <button
                           type="button"
-                          onClick={() => setNicknameEditing(true)}
-                          className="ml-2 text-base font-bold text-slate-500 hover:text-slate-300"
+                          title={t('settings.editNickname')}
+                          onClick={handleNicknameEdit}
+                          className="max-w-full break-all align-baseline hover:underline focus-visible:underline"
                         >
-                          {t('settings.editNickname')}
+                          {debugNickname}
                         </button>
-                      </>
+                      </span>
                     ) : (
                       /* 未设置昵称：整句改为可点击的 Set Your Name，点击后进入编辑 */
                       <button
                         type="button"
-                        onClick={() => setNicknameEditing(true)}
+                        onClick={handleNicknameEdit}
                         className="text-2xl font-black tracking-tight text-amber-500 hover:text-amber-400"
                       >
                         {t('settings.setNickname')}

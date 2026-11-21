@@ -1,8 +1,8 @@
 // Deterministic mine placement using a seeded PRNG.
 // Used by the server to reconstruct the exact same mine layout from a mine_seed.
 
-import { CellData } from './types';
-import { placeMines } from './gameLogic';
+import type { CellData, ReplayVersion } from './types';
+import { createEmptyGrid, placeMines } from './gameLogic';
 
 /**
  * Simple seedable PRNG (mulberry32).
@@ -31,6 +31,29 @@ export const hashSeed = (str: string): number => {
   return hash;
 };
 
+export function placeSeededMines(
+  grid: CellData[][], mines: number, firstRow: number, firstCol: number,
+  seed: string, version: ReplayVersion,
+): CellData[][] {
+  const rng = createRNG(hashSeed(seed));
+  if (version !== 4) return placeMines(grid, mines, firstRow, firstCol, rng);
+
+  const rows = grid.length, cols = grid[0].length;
+  const targetArea = rows * cols / 9;
+  const shortSide = Math.max(1, Math.round(Math.min(rows, cols) / 3));
+  const longSide = Math.max(1, Math.round(targetArea / shortSide));
+  let height = rows > cols ? longSide : shortSide;
+  let width = rows > cols ? shortSide : longSide;
+  const region = createRNG(hashSeed(seed + '-cluster'));
+  if (rows === cols && region() < 0.5) [height, width] = [width, height];
+  const top = Math.floor(region() * (rows - height + 1));
+  const left = Math.floor(region() * (cols - width + 1));
+  return placeMines(grid, mines, firstRow, firstCol, rng, {
+    weightAt: (row, col) => row >= top && row < top + height && col >= left && col < left + width ? 1.5 : 1,
+    arrivals: createRNG(hashSeed(seed + '-cluster-arrivals')),
+  });
+}
+
 /**
  * Deterministically place mines on a fresh grid.
  *
@@ -46,25 +69,7 @@ export const deterministicPlaceMines = (
   firstClickRow: number,
   firstClickCol: number,
   seed: string,
+  version: ReplayVersion = 3,
 ): CellData[][] => {
-  const rng = createRNG(hashSeed(seed));
-
-  // placeMines expects a pre-created empty grid
-  const emptyGrid: CellData[][] = [];
-  for (let r = 0; r < rows; r++) {
-    const row: CellData[] = [];
-    for (let c = 0; c < cols; c++) {
-      row.push({
-        id: `${r}-${c}`,
-        row: r,
-        col: c,
-        isMine: false,
-        status: 'hidden',
-        neighborMines: 0,
-      });
-    }
-    emptyGrid.push(row);
-  }
-
-  return placeMines(emptyGrid, mines, firstClickRow, firstClickCol, rng);
+  return placeSeededMines(createEmptyGrid(rows, cols), mines, firstClickRow, firstClickCol, seed, version);
 };

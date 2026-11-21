@@ -16,31 +16,39 @@ async function request<T = any>(path: string, options?: RequestInit): Promise<T>
 
 // ── Auth ──
 
-export async function register(platform: string, platform_id: string) {
+export async function register(platform: string, platform_id: string, credential: string) {
   return request<{ account_id: string; nickname: string | null; created_at: number }>('/api/auth', {
     method: 'POST',
+    headers: accountHeaders(credential),
     body: JSON.stringify({ platform, platform_id }),
   });
 }
 
-export async function setNickname(id: string, nickname: string) {
+function accountHeaders(credential: string) {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${credential}` };
+}
+
+export async function setNickname(id: string, nickname: string, credential: string) {
   return request<{ ok: boolean; nickname: string }>(`/api/auth/${id}/nickname`, {
     method: 'PATCH',
+    headers: accountHeaders(credential),
     body: JSON.stringify({ nickname }),
   });
 }
 
 // ── Nonce ──
 
-export async function getNonce(accountId: string) {
-  return request<{ nonce: string; expires_at: number }>(`/api/nonce?account_id=${encodeURIComponent(accountId)}`);
+export async function getNonce(accountId: string, credential: string) {
+  return request<{ nonce: string; expires_at: number }>(
+    `/api/nonce?account_id=${encodeURIComponent(accountId)}`, { headers: accountHeaders(credential) });
 }
 
 // ── Submit ──
 
-export async function submitGame(accountId: string, payload: string) {
+export async function submitGame(accountId: string, payload: string, credential: string) {
   return request<{ valid: boolean; reason: string | null }>('/api/submit', {
     method: 'POST',
+    headers: accountHeaders(credential),
     body: JSON.stringify({ account_id: accountId, payload }),
   });
 }

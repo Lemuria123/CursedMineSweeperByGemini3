@@ -23,8 +23,26 @@ function spots(moves: Array<{ row: number; col: number }>): string[] {
 describe('recommendedMines', () => {
   it('三档预设和游戏用的密度公式一致', () => {
     assert.equal(recommendedMines(9, 9), 19);
-    assert.equal(recommendedMines(16, 16), 57);
-    assert.equal(recommendedMines(25, 16), 87);
+    assert.equal(recommendedMines(16, 16), 58);
+    assert.equal(recommendedMines(25, 16), 88);
+    assert.equal(recommendedMines(25, 25), 135);
+  });
+
+  it('三个预设和更大棋盘的雷密度依次下降', () => {
+    const density = (rows: number, cols: number) => recommendedMines(rows, cols) / (rows * cols);
+    assert(density(9, 9) > density(16, 16));
+    assert(density(16, 16) > density(25, 16));
+    assert(density(25, 16) > density(25, 25));
+  });
+
+  it('调整后所有支持的棋盘至少保留原推荐雷数', () => {
+    for (let rows = 8; rows <= 25; rows++) {
+      for (let cols = 8; cols <= 25; cols++) {
+        const area = rows * cols;
+        const previous = Math.floor(area * (0.2 + area ** -0.65)) - 1;
+        assert(recommendedMines(rows, cols) >= previous, `${rows}×${cols}`);
+      }
+    }
   });
 });
 
@@ -99,5 +117,19 @@ describe('deduce', () => {
     assert.equal(result.inconsistent, false);
     assert.deepEqual(result.flags, []);
     assert.deepEqual(result.reveals, []);
+  });
+
+  it('较大棋盘能枚举 40 格前沿，正确推出位图高位上的安全格', () => {
+    const hidden = '.'.repeat(20);
+    // 两排隐藏格由中间的一排数字连成 40 格区域。相邻等式推出
+    // 第 3、6、9、12、15、18 列都没有雷，其余留给枚举判断。
+    const result = deduce(board([hidden, '1'.repeat(20), ...Array<string>(18).fill(hidden)], 7));
+    assert.equal(result.capped, false);
+    assert.equal(result.inconsistent, false);
+    const safe = spots(result.reveals);
+    assert(safe.includes('0,17'));
+    assert(safe.includes('2,17'));
+    assert(!safe.includes('2,18'));
+    assert.deepEqual(result.flags, []);
   });
 });

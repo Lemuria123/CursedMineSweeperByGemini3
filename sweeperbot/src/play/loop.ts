@@ -21,6 +21,7 @@ import {
 import { counterAnchorY, readMineCounter } from '../vision/digits';
 import { detectOverlay, findResetFace, findSettingsGear, type Overlay } from '../vision/overlay';
 import { SessionLog } from './log';
+import { withTimeout } from '../timeout';
 
 export interface RunSummary {
   win: number;
@@ -94,8 +95,7 @@ async function selectDifficulty(session: GameSession, difficulty: FixedDifficult
         await session.click(overlay.skip.x, overlay.skip.y);
         return null;
       }
-      // 设置卡片比窗口高时，滚一下再找「开始」按钮和页签。
-      await session.wheel(Math.round(shot.width / 2), Math.round(shot.height / 2), 280);
+      // 新设置页小勾在视口内时不需要滚；乱滚会抖。只在完全找不到设置特征时才轻滚一次。
       return null;
     });
     if (!settings || settings.kind !== 'settings') continue;
@@ -369,6 +369,8 @@ async function playOne(
       return end('stuck', field.viewport, { capped: result.capped, reason: '没有必然安全的格子' });
     }
 
+    // Hard 盘一批连点会让页面主线程卡住，随后 CDP 截图永不返回（曾冻死在第 80 局）。
+    // 每手下一点间隔，给开格子级联留出时间。
     for (const move of result.flags) {
       await clickCell(session, field, geom, move.row, move.col, 'right');
       flagsPlaced++;
@@ -382,6 +384,7 @@ async function playOne(
         reason: move.reason,
         step: steps,
       });
+      await sleep(45);
     }
     for (const move of result.reveals) {
       await clickCell(session, field, geom, move.row, move.col, 'left');
@@ -395,6 +398,7 @@ async function playOne(
         reason: move.reason,
         step: steps,
       });
+      await sleep(45);
     }
 
     const changed = await poll(12, 80, async () => {
@@ -421,7 +425,7 @@ async function playOne(
 
 export async function runBot(config: BotConfig): Promise<RunSummary> {
   const log = new SessionLog(config.logDir);
-  const session = await GameSession.open(config);
+  let session = await GameSession.open(config);
   const summary: RunSummary = { win: 0, loss: 0, stuck: 0, vision_error: 0, logic_error: 0, ace: 0 };
   let closed = false;
   const shutdown = async () => {
@@ -455,7 +459,24 @@ export async function runBot(config: BotConfig): Promise<RunSummary> {
         current = next;
       }
       const gameConfig = { ...config, difficulty: next };
-      const result = await playOne(session, gameConfig, log, game);
+      // 单局硬超时：CDP 卡死时不能拖死整批 1000 局。
+      let result: GameResult;
+      try {
+        result = await withTimeout(playOne(session, gameConfig, log, game), 180000, 'playOne');
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`第 ${game} 局异常中止：${message}`);
+        log.event({ type: 'game_end', game, outcome: 'vision_error', ace: false, prayers: 0, steps: -1, reason: message, difficulty: next });
+        summary.vision_error++;
+        // 浏览器可能已僵死：重建会话再继续后面的局。
+        await session.close().catch(() => undefined);
+        session = await GameSession.open(config);
+        await session.learnCounterFont();
+        await session.goto(config.url);
+        await waitForGame(session, config.url);
+        current = null;
+        continue;
+      }
       summary[result.kind]++;
       if (result.ace) summary.ace++;
     }

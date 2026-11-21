@@ -11,12 +11,12 @@ interface Props {
 
 /**
  * 三个预设的棋盘外形，不写文字。
- * 简单是小方块（9×9），中等是更大的方块（16×16），困难是又高又窄的一条（25×16）。
+ * 简单是小方块（9×9），中等是更大的方块（16×16），困难和中等同宽，按 16 列、25 行拉高。
  */
 const BOARD_MARK: Record<string, string> = {
   Easy: 'w-2.5 h-2.5',
   Medium: 'w-3.5 h-3.5',
-  Hard: 'w-3 h-4',
+  Hard: 'w-3.5 aspect-[16/25]',
 };
 
 export const DifficultySelector: React.FC<Props> = ({ activeName, onChange, options }) => {

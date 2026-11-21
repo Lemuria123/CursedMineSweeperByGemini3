@@ -17,12 +17,16 @@ import {
 } from '../../shared/gameLogic';
 import { createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
 import { CellData } from '../../shared/types';
-import { createReplayBoard } from './verify';
+import { createReplayBoard, isGameSubmission } from './verify';
 
 const app = express();
+const adminToken = process.env.ADMIN_TOKEN?.trim();
+const adminEnabled = Boolean(adminToken && adminToken !== 'admin' && adminToken !== 'change-me-in-production');
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieSession({ name: 'cms_admin', secret: process.env.ADMIN_TOKEN || 'change-me-in-production', maxAge: 24 * 60 * 60 * 1000 }));
+if (adminEnabled) {
+  app.use(cookieSession({ name: 'cms_admin', secret: adminToken, maxAge: 24 * 60 * 60 * 1000 }));
+}
 
 // Serve static files from server/public/ (tailwind.min.css and other server assets)
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -71,12 +75,11 @@ app.get('/', (_req, res) => {
   <input name="token" type="password" placeholder="Admin Token" required
     class="w-full px-4 py-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-purple-500" />
   <button type="submit" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white font-semibold rounded-lg transition">Sign In</button>
-  <p class="text-gray-600 text-xs text-center">Default: admin</p>
 </form></body></html>`);
 });
 
 app.post('/login', (req, res) => {
-  if (req.body.token === (process.env.ADMIN_TOKEN || 'admin')) { req.session!.admin = true; res.redirect('/dashboard'); }
+  if (adminEnabled && req.body.token === adminToken) { req.session!.admin = true; res.redirect('/dashboard'); }
   else res.redirect('/');
 });
 
@@ -287,18 +290,16 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
 
   let submission: GameSubmission;
   try {
-    submission = JSON.parse(decrypt(record.game_data));
+    const data: unknown = JSON.parse(decrypt(record.game_data));
+    if (!isGameSubmission(data)) return res.status(400).json({ error: 'Invalid replay data' });
+    submission = data;
   } catch (e: any) {
     return res.status(400).json({ error: `Decrypt failed: ${e.message}` });
   }
 
   const { grid: gridConfig, mine_seed, actions, prayers_used, version = 1 } = submission;
-  if (!actions || actions.length === 0) {
-    return res.status(400).json({ error: 'No actions in record' });
-  }
-
   const firstAction = actions[0];
-  let board = createReplayBoard(gridConfig, mine_seed, firstAction);
+  let board = createReplayBoard(gridConfig, mine_seed, firstAction, version);
   if (!board) return res.status(400).json({ error: 'Invalid initial flags' });
 
   // Capture the state immediately before the first reveal, including pre-game flags.
@@ -454,34 +455,42 @@ let autoTimer = null;
 
 async function load() {
   const id = location.pathname.split('/').pop();
+  const info = document.getElementById('info');
   try {
     const r = await fetch('/api/admin/record/' + id);
-    if (!r.ok) { document.getElementById('info').innerHTML = '<span class="text-red-400">Failed to load: ' + r.status + '</span>'; return; }
+    if (!r.ok) { info.textContent = 'Failed to load: ' + r.status; return; }
     const j = await r.json();
-    if (j.error) { document.getElementById('info').innerHTML = '<span class="text-red-400">' + j.error + '</span>'; return; }
+    if (j.error) { info.textContent = j.error; return; }
     Object.assign(data, j);
-    document.getElementById('info').innerHTML =
-      '<span class="text-purple-400 font-bold">Replay #' + j.id + '</span> &nbsp;' +
-      j.grid.rows + 'x' + j.grid.cols + ' / ' + j.grid.mines + ' mines &nbsp;|&nbsp;' +
-      'Prayers: ' + j.prayers_used + ' (replayed: ' + j.prayers_replayed + ') &nbsp;|&nbsp;' +
-      'Status: <span class="' + (j.status === 'won' ? 'text-green-400' : 'text-red-400') + '">' + j.status.toUpperCase() + '</span> &nbsp;|&nbsp;' +
+    info.textContent =
+      'Replay #' + j.id + ' | ' + j.grid.rows + 'x' + j.grid.cols + ' / ' + j.grid.mines + ' mines | ' +
+      'Prayers: ' + j.prayers_used + ' (replayed: ' + j.prayers_replayed + ') | ' +
+      'Status: ' + j.status.toUpperCase() + ' | ' +
       fmtDate(j.submitted_at);
     renderActionList();
     setStep(-1); // show initial
-  } catch(e) { document.getElementById('info').innerHTML = '<span class="text-red-400">Error: ' + e.message + '</span>'; }
+  } catch(e) { info.textContent = 'Error: ' + e.message; }
 }
 
 function renderActionList() {
   const list = document.getElementById('actionList');
-  list.innerHTML = data.steps.map((s,i) =>
-    '<div class="action-row flex items-center gap-2 px-2 py-1 rounded text-xs border-b border-gray-700" onclick="highlightStep(' + i + ')">' +
-      '<span class="text-gray-500 w-5 text-right">' + (i+1) + '</span>' +
-      '<span class="w-12 ' + typeColor(s.action.type) + '">' + s.action.type.padEnd(12) + '</span>' +
-      '<span class="text-gray-400 font-mono">(' + s.action.row + ',' + s.action.col + ')</span>' +
-      (s.action.prayed ? '<span class="text-amber-400 ml-1">pray</span>' : '') +
-      '<span class="text-gray-600 ml-auto">' + s.action.ts + 'ms</span>' +
-    '</div>'
-  ).join('');
+  list.replaceChildren(...data.steps.map((s,i) => {
+    const row = document.createElement('div');
+    row.className = 'action-row flex items-center gap-2 px-2 py-1 rounded text-xs border-b border-gray-700';
+    row.addEventListener('click', () => highlightStep(i));
+    const append = (className, text) => {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = text;
+      row.append(span);
+    };
+    append('text-gray-500 w-5 text-right', i + 1);
+    append('w-12 ' + typeColor(s.action.type), s.action.type);
+    append('text-gray-400 font-mono', '(' + s.action.row + ',' + s.action.col + ')');
+    if (s.action.prayed) append('text-amber-400 ml-1', 'pray');
+    append('text-gray-600 ml-auto', s.action.ts + 'ms');
+    return row;
+  }));
 }
 
 function typeColor(t) {
@@ -768,7 +777,11 @@ const PORT = process.env.ADMIN_PORT ? parseInt(process.env.ADMIN_PORT) : 38002;
 
 // Export for use by index.ts (shared process, shared DB)
 export function startAdmin() {
-  app.listen(PORT, () => {
+  if (!adminEnabled) {
+    console.warn('[admin] disabled: set a non-default ADMIN_TOKEN');
+    return;
+  }
+  return app.listen(PORT, process.env.ADMIN_HOST || '127.0.0.1', () => {
     console.log(`[admin] listening on :${PORT}`);
   });
 }

@@ -67,7 +67,6 @@
     "noRecord": "暂无个人记录",
     "noLeaderboard": "暂无排行榜数据",
     "scrollMore": "滚动加载更多（还剩 {remaining} 条）",
-    "recordsFooter": "时间已验证 · 反作弊保护",
     "recordsCount": "{count} 条记录"
   },
   "difficulty": {

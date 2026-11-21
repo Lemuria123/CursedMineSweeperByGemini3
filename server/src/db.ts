@@ -64,16 +64,15 @@ const dbReady = initDb().then((database) => {
       id          TEXT PRIMARY KEY,
       platform    TEXT NOT NULL,
       platform_id TEXT NOT NULL,
+      credential_hash TEXT,
       nickname    TEXT,
       created_at  INTEGER NOT NULL,
       UNIQUE(platform, platform_id)
     )
   `);
 
-  // Migration: add prayers_used column if missing (v0.2.2)
-  try { migrateAddColumn('records', 'prayers_used', 'INTEGER NOT NULL DEFAULT -1'); } catch {}
-  // Migration: add verify_reason column if missing (v0.2.3)
-  try { migrateAddColumn('records', 'verify_reason', "TEXT DEFAULT NULL"); } catch {}
+  migrateAddColumn('accounts', 'credential_hash', 'TEXT');
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_credential ON accounts(credential_hash)');
 
   function migrateAddColumn(table: string, col: string, def: string) {
     const cols = db.exec(`PRAGMA table_info(${table})`);
@@ -97,9 +96,13 @@ const dbReady = initDb().then((database) => {
       game_data   TEXT NOT NULL,
       validated   INTEGER NOT NULL DEFAULT 0,
       submitted_at INTEGER NOT NULL,
-      prayers_used INTEGER NOT NULL DEFAULT -1
+      prayers_used INTEGER NOT NULL DEFAULT -1,
+      verify_reason TEXT
     )
   `);
+
+  migrateAddColumn('records', 'prayers_used', 'INTEGER NOT NULL DEFAULT -1');
+  migrateAddColumn('records', 'verify_reason', 'TEXT');
 
   db.run('CREATE INDEX IF NOT EXISTS idx_records_dim ON records(rows, cols, time_ms)');
   db.run('CREATE INDEX IF NOT EXISTS idx_records_account ON records(account_id)');
@@ -144,7 +147,7 @@ const dbReady = initDb().then((database) => {
       scheduleSave();
       console.log(`[db] cleaned ${before} expired nonces`);
     }
-  }, 10 * 60 * 1000);
+  }, 10 * 60 * 1000).unref();
 
   return db;
 });

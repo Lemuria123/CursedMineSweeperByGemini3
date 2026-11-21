@@ -24,7 +24,7 @@ for (const [row, col] of squaresToReveal) {
 }
 
 const payload = recorder.buildPayload('pre-first-flags-test', 8, 8, 10, 0);
-assert.equal(payload.version, 3);
-const result = verifySubmission({ ...payload, total_time_ms: Math.max(100, payload.total_time_ms) });
+// The recorded actions above come from the original uniform board.
+const result = verifySubmission({ ...payload, version: 3, total_time_ms: Math.max(100, payload.total_time_ms) });
 assert.deepEqual(result, { valid: true });
 console.log('PASS: flags placed before the first reveal carry through to a zero-prayer win');

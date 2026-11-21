@@ -6,10 +6,11 @@ import { register } from './api';
 
 const PLATFORM_STORAGE_KEY = 'cms_platform_id';
 const ACCOUNT_STORAGE_KEY = 'cms_account_id';
+const CREDENTIAL_STORAGE_KEY = 'cms_account_credential';
 
 let cachedPlatformId: string | null = null;
 let cachedAccountId: string | null = null;
-let ensurePromise: Promise<{ accountId: string; nickname: string | null }> | null = null;
+let ensurePromise: Promise<{ accountId: string; nickname: string | null; credential: string }> | null = null;
 
 /**
  * 迁移旧版 localStorage：原先 cms_account_id 存的是设备指纹而非服务端账号 ID。
@@ -50,14 +51,19 @@ export function setServerAccountId(id: string): void {
  * 确保账号已在服务端注册，返回服务端 account_id 与昵称。
  * 并发调用共享同一 Promise，避免重复注册。
  */
-export async function ensureAccount(): Promise<{ accountId: string; nickname: string | null }> {
+export async function ensureAccount() {
   if (ensurePromise) return ensurePromise;
 
   ensurePromise = (async () => {
     const platformId = getPlatformId();
-    const info = await register('auto', platformId);
+    let credential = localStorage.getItem(CREDENTIAL_STORAGE_KEY);
+    if (!credential) {
+      credential = crypto.randomUUID();
+      localStorage.setItem(CREDENTIAL_STORAGE_KEY, credential);
+    }
+    const info = await register('auto', platformId, credential);
     setServerAccountId(info.account_id);
-    return { accountId: info.account_id, nickname: info.nickname };
+    return { accountId: info.account_id, nickname: info.nickname, credential };
   })();
 
   try {

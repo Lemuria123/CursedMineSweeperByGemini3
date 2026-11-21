@@ -156,16 +156,28 @@ npx ts-node --transpile-only src/test_ace_valid.ts && echo "---ACE OK---" && npx
 ```powershell
 # 登录
 Invoke-WebRequest -Uri "http://localhost:38002/login" -Method POST `
-  -Body "token=admin" -ContentType "application/x-www-form-urlencoded"
+  -Body @{ token = $env:ADMIN_TOKEN } -ContentType "application/x-www-form-urlencoded"
 ```
 
-浏览器打开 http://localhost:38002，输入密码 `admin`。
+启动服务前设置 `ADMIN_TOKEN`，然后打开 http://localhost:38002 并输入该令牌。
 
 验收要点:
-1. Dashboard: Users / ACE Records / Rewards / Today Active 计数正确
-2. Records 页: 有测试产生的 ACE 记录
-3. Rewards 页: 有测试产生的奖励
-4. Submissions 页: Passed/Failed Tab 过滤正常
+1. Dashboard 显示玩家和成绩统计
+2. Records 页显示测试生成的成绩
+3. Submissions 页正确过滤通过和失败的提交
+
+### 账号授权、数据库和后台回放回归
+
+在 `server` 目录运行以下脚本。它使用独立数据库和系统分配的端口。
+
+```powershell
+npx ts-node src/test_p1_regressions.ts
+npx ts-node src/test_p1_regressions.ts legacy
+npx ts-node src/test_p1_regressions.ts disabled
+npx ts-node src/test_p1_regressions.ts default-token
+```
+
+浏览器首次注册时会生成并保存设备凭据。旧设备首次登录时，将新凭据绑定到原账号。注册、改名、领取 nonce 和提交成绩均通过 `Authorization: Bearer <credential>` 提交凭据。早期手写 HTTP 测试使用的是升级前的协议。
 
 ---
 

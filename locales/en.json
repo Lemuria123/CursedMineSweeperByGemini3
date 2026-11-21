@@ -67,7 +67,6 @@
     "noRecord": "No personal record yet",
     "noLeaderboard": "No leaderboard data yet",
     "scrollMore": "Scroll to load more ({remaining} remaining)",
-    "recordsFooter": "Times verified & anti-cheat protected",
     "recordsCount": "{count} records"
   },
   "difficulty": {

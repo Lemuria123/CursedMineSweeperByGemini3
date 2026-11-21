@@ -16,12 +16,7 @@ export const DIRECTIONS = [
   [1, -1],  [1, 0],  [1, 1]
 ];
 
-// Formula: Total * (20% + 1 / Total^0.65)
-export const calculateRecommendedMines = (rows: number, cols: number): number => {
-  const total = rows * cols;
-  const factor = 0.20 + (1 / Math.pow(total, 0.65));
-  return Math.max(1, Math.floor(total * factor) - 1);
-};
+export { calculateRecommendedMines } from './mineDensity';
 
 export const createEmptyGrid = (rows: number, cols: number): CellData[][] => {
   const grid: CellData[][] = [];
@@ -153,6 +148,10 @@ export const placeMines = (
   firstClickRow: number,
   firstClickCol: number,
   rng: () => number = Math.random,
+  weightedPlacement?: {
+    weightAt: (row: number, col: number) => number;
+    arrivals: () => number;
+  },
 ): CellData[][] => {
   const rows = grid.length;
   const cols = grid[0].length;
@@ -181,8 +180,22 @@ export const placeMines = (
     const j = Math.floor(rng() * (i + 1));
     [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
   }
-  for (let i = 0; i < mines && i < candidates.length; i++) {
-    newGrid[candidates[i].r][candidates[i].c].isMine = true;
+  let ordered = candidates;
+  if (weightedPlacement) {
+    // A uniform permutation and independent exponential spacings form an
+    // exponential race. Scaling each arrival by its inverse weight keeps
+    // sampling without replacement and preserves the order at equal weights.
+    let arrival = 0;
+    const ranked = candidates.map((cell, index) => {
+      arrival += -Math.log(Math.max(1e-12, weightedPlacement.arrivals())) / (candidates.length - index);
+      return { cell, time: arrival / weightedPlacement.weightAt(cell.r, cell.c) };
+    });
+    ranked.sort((a, b) => a.time - b.time);
+    ordered = ranked.map(({ cell }) => cell);
+  }
+  for (let i = 0; i < mines && i < ordered.length; i++) {
+    const { r, c } = ordered[i];
+    newGrid[r][c].isMine = true;
   }
 
   for (let r = 0; r < rows; r++) {
@@ -1083,7 +1096,7 @@ export const rearrangeMines = (
     forceMine,
     rng,
     originalTotal,
-    preferredPrayerOnly: !forceMine && version >= 3,
+    preferredPrayerOnly: !forceMine && version !== 2,
     observeFailure: observeAttempt !== undefined,
     restore,
     commit,
@@ -1216,7 +1229,6 @@ export function completeExactPrayer(grid: CellData[][], row: number, col: number
 }
 
 export const revealCellLogic: typeof revealCellFast = (grid, row, col, first, prayer, rng, observe, version = CURRENT_REPLAY_VERSION) => {
-  if (version === 1) return revealCellFast(grid, row, col, first, prayer, rng, observe, version);
   let attempt: RearrangementAttempt | undefined;
   const fast = revealCellFast(grid, row, col, first, prayer, rng, observe && (event => { attempt = event; }), version);
   const exact = prayer && fast.exploded ? completeExactPrayer(grid, row, col) : null;

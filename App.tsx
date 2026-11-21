@@ -4,8 +4,9 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { useTranslation } from 'react-i18next';
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CellStatus } from './types';
-import { createEmptyGrid, placeMines, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
-import { createRNG, hashSeed } from './shared/deterministicPlaceMines';
+import { createEmptyGrid, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
+import { createRNG, hashSeed, placeSeededMines } from './shared/deterministicPlaceMines';
+import { CURRENT_REPLAY_VERSION } from './shared/types';
 import type { RearrangementAttempt } from './shared/gameLogic';
 import { Board } from './components/Board';
 import { GameHeader } from './components/GameHeader';
@@ -213,7 +214,7 @@ const App: React.FC = () => {
       const seedSuffix = String(Date.now());
       const mineSeed = `${gameState.difficulty.rows}-${gameState.difficulty.cols}-${gameState.difficulty.mines}-${row}-${col}-${seedSuffix}`;
       cspRngRef.current = createRNG(hashSeed(mineSeed + '-csp'));
-      newGrid = placeMines(newGrid, gameState.difficulty.mines, row, col, createRNG(hashSeed(mineSeed)));
+      newGrid = placeSeededMines(newGrid, gameState.difficulty.mines, row, col, mineSeed, CURRENT_REPLAY_VERSION);
       newStatus = 'playing';
       const initialFlags = newGrid.flat()
         .filter(cell => cell.status === 'flagged')
@@ -307,11 +308,14 @@ const App: React.FC = () => {
       if (newPrayersUsed <= threshold) {
         // 棋盘胜负必须在这次点击里同步落下，网络请求不能挡住翻开结果。
         // 提交放在立即执行的异步函数里：失败写日志，卸载后不再 setState。
-        const prayersUsedForSubmit = newPrayersUsed;
+        const { rows, cols, mines } = gameState.difficulty;
+        const completedGame = recorderRef.current.snapshot(rows, cols, mines, newPrayersUsed);
         void (async () => {
           try {
-            const { accountId, nickname: existingNickname } = await ensureAccount();
-            await submitToServer(accountId, prayersUsedForSubmit);
+            const { accountId, nickname: existingNickname, credential } = await ensureAccount();
+            const { nonce } = await getNonce(accountId, credential);
+            const encrypted = await encrypt(JSON.stringify({ ...completedGame, nonce }));
+            await submitGame(accountId, encrypted, credential);
             // 等待期间玩家可能已经离开页面，此时昵称框没有可附着的组件
             if (!isMountedRef.current) return;
             if (!existingNickname) {
@@ -400,27 +404,13 @@ const App: React.FC = () => {
     window.addEventListener('pointercancel', handlePointerUp);
   };
 
-  // ── Server submission helper ──
-  const submitToServer = useCallback(async (accountId: string, prayersUsed: number) => {
-    const nonceData = await getNonce(accountId);
-    const payload = recorderRef.current.buildPayload(
-      nonceData.nonce,
-      gameState.difficulty.rows,
-      gameState.difficulty.cols,
-      gameState.difficulty.mines,
-      prayersUsed,
-    );
-    const encrypted = await encrypt(JSON.stringify(payload));
-    await submitGame(accountId, encrypted);
-  }, [gameState.difficulty]);
-
   const handleNicknameSubmit = async () => {
     const trimmed = nickname.trim();
     if (!trimmed) return;
     setNicknameError('');
     try {
-      const { accountId } = await ensureAccount();
-      await setNickname(accountId, trimmed);
+      const { accountId, credential } = await ensureAccount();
+      await setNickname(accountId, trimmed, credential);
       setShowNicknamePrompt(false);
       setNicknameLocal('');
       // Record already submitted by the win callback — no duplicate submit needed

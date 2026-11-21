@@ -3,7 +3,7 @@
  *
  * 不猜。某一格只有在「每一种满足数字与总雷数的布雷」里都不是雷时，才允许点开。
  * 这和诅咒规则一致：只要还存在一种把它放成雷的合法布局，不祈祷去点就一定会炸。
- * 枚举不出全部布局的大区域（超过 MAX_COMPONENT）只保留单格规则，绝不拿残缺枚举当必然。
+ * 枚举不出全部布局的大区域（超过枚举上限）只保留单格规则，绝不拿残缺枚举当必然。
  */
 
 export type SeenCell =
@@ -41,8 +41,8 @@ export interface Deduction {
   fault: LogicFault | null;
 }
 
-/** 超过这个未知格数就不再穷举，避免把算不完的局面误当成「没有解」。 */
-export const MAX_COMPONENT = 20;
+/** 区域枚举至少支持 20 格，较大的棋盘按总格数的 15% 扩大上限。 */
+export const MIN_COMPONENT_LIMIT = 20;
 
 const DIRS: ReadonlyArray<readonly [number, number]> = [
   [-1, -1], [-1, 0], [-1, 1],
@@ -193,19 +193,9 @@ function applyBasic(board: SeenBoard, work: Work, flags: SolverMove[], reveals: 
   }
 }
 
-function popcount(n: number): number {
-  let count = 0;
-  let x = n;
-  while (x) {
-    x &= x - 1;
-    count++;
-  }
-  return count;
-}
-
 interface Constraint {
   /** 落在本区域未知格上的位图 */
-  bits: number;
+  bits: bigint;
   need: number;
   unknownCount: number;
 }
@@ -291,7 +281,7 @@ function buildComponents(board: SeenBoard, work: Work): { components: Component[
         const key = `${pos.r},${pos.c}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        let bits = 0;
+        let bits = 0n;
         let unknownCount = 0;
         let mines = 0;
         for (const near of neighbors(board.rows, board.cols, pos.r, pos.c)) {
@@ -301,7 +291,7 @@ function buildComponents(board: SeenBoard, work: Work): { components: Component[
             const id = index.get(`${near.r},${near.c}`);
             const bit = id === undefined ? undefined : local.get(id);
             if (bit !== undefined) {
-              bits |= 1 << bit;
+              bits |= 1n << BigInt(bit);
               unknownCount++;
             }
           }
@@ -317,39 +307,92 @@ function buildComponents(board: SeenBoard, work: Work): { components: Component[
 
 interface AssignmentGroup {
   count: number;
-  always: number;
-  ever: number;
+  always: bigint;
+  ever: bigint;
 }
 
-function enumerate(component: Component): AssignmentGroup[] | 'capped' {
-  if (component.cells.length > MAX_COMPONENT) return 'capped';
-  const groups = new Map<number, { always: number; ever: number }>();
+function enumerate(component: Component, limit: number): AssignmentGroup[] | 'capped' {
   const total = component.cells.length;
+  if (total > limit) return 'capped';
+  if (component.constraints.some(clue => clue.need < 0 || clue.need > clue.unknownCount)) return [];
 
-  const visit = (index: number, mask: number, count: number): void => {
-    for (const constraint of component.constraints) {
-      const placed = popcount(mask & constraint.bits);
-      const assigned = popcount(((1 << index) - 1) & constraint.bits);
-      const pending = constraint.unknownCount - assigned;
-      if (placed > constraint.need) return;
-      if (placed + pending < constraint.need) return;
-    }
-    if (index === total) {
-      const existing = groups.get(count);
-      if (!existing) groups.set(count, { always: mask, ever: mask });
-      else {
-        existing.always &= mask;
-        existing.ever |= mask;
+  const bits = component.cells.map((_, i) => 1n << BigInt(i));
+  const incident = bits.map(bit => component.constraints.flatMap((clue, i) => (clue.bits & bit) ? [i] : []));
+  const remaining = component.constraints.map(clue => clue.unknownCount);
+  const needs = component.constraints.map(clue => clue.need);
+
+  // Prefer closing constraints before opening new ones, keeping the memo key small.
+  const unassigned = bits.map((_, i) => i);
+  const order: number[] = [];
+  const active: number[][] = [];
+  const placed = component.constraints.map(() => 0);
+  while (unassigned.length) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    unassigned.forEach((cell, index) => {
+      const score = incident[cell].reduce((sum, clue) => {
+        if (placed[clue] === 0) return sum - 2;
+        return sum + (placed[clue] + 1 === remaining[clue] ? 12 : 4);
+      }, 0);
+      if (score > bestScore) {
+        bestIndex = index;
+        bestScore = score;
       }
-      return;
-    }
-    visit(index + 1, mask, count);
-    visit(index + 1, mask | (1 << index), count + 1);
-  };
+    });
+    const [cell] = unassigned.splice(bestIndex, 1);
+    active.push(placed.flatMap((used, i) => used > 0 && used < remaining[i] ? [i] : []));
+    order.push(cell);
+    for (const i of incident[cell]) placed[i]++;
+  }
 
-  visit(0, 0, 0);
-  if (groups.size === 0) return [];
-  return [...groups.entries()].map(([count, bits]) => ({ count, always: bits.always, ever: bits.ever }));
+  type Masks = Omit<AssignmentGroup, 'count'>;
+  type SuffixResults = Map<number, Masks>;
+  const memo = active.map(() => new Map<string, SuffixResults>());
+  const leaf: SuffixResults = new Map([[0, { always: 0n, ever: 0n }]]);
+  const maxMemoEntries = 50_000;
+  let memoEntries = 0;
+
+  // Each result summarizes all completions of the remaining cells by mine count.
+  // With the same unassigned cells and residual totals, the suffixes are identical.
+  function visit(depth: number): SuffixResults {
+    if (depth === total) return leaf;
+    const key = active[depth].map(i => needs[i]).join(',');
+    const cached = memo[depth].get(key);
+    if (cached !== undefined) return cached;
+
+    const cell = order[depth];
+    const affected = incident[cell];
+    const result: SuffixResults = new Map();
+    for (const i of affected) remaining[i]--;
+    if (affected.every(i => needs[i] <= remaining[i])) {
+      for (const [count, masks] of visit(depth + 1)) result.set(count, { ...masks });
+    }
+    for (const i of affected) needs[i]--;
+    if (affected.every(i => needs[i] >= 0 && needs[i] <= remaining[i])) {
+      for (const [count, masks] of visit(depth + 1)) {
+        const always = masks.always | bits[cell], ever = masks.ever | bits[cell];
+        const existing = result.get(count + 1);
+        if (existing) {
+          existing.always &= always;
+          existing.ever |= ever;
+        } else {
+          result.set(count + 1, { always, ever });
+        }
+      }
+    }
+    for (const i of affected) {
+      needs[i]++;
+      remaining[i]++;
+    }
+
+    if (memoEntries < maxMemoEntries) {
+      memo[depth].set(key, result);
+      memoEntries++;
+    }
+    return result;
+  }
+
+  return [...visit(0)].map(([count, masks]) => ({ count, ...masks }));
 }
 
 function sumSet(left: Set<number>, groups: AssignmentGroup[]): Set<number> {
@@ -364,11 +407,12 @@ function sumSet(left: Set<number>, groups: AssignmentGroup[]): Set<number> {
  */
 function applyEnumeration(board: SeenBoard, work: Work, flags: SolverMove[], reveals: SolverMove[]): boolean {
   const { components, free } = buildComponents(board, work);
+  const limit = Math.max(MIN_COMPONENT_LIMIT, Math.floor(board.rows * board.cols * 15 / 100));
   const solved: AssignmentGroup[][] = [];
   const loose: Array<{ min: number; max: number }> = [];
   let capped = false;
   for (const component of components) {
-    const groups = enumerate(component);
+    const groups = enumerate(component, limit);
     if (groups === 'capped') {
       // 区域太大时不算具体布局，但仍给出雷数上下界，用来核对剩余雷数。
       capped = true;
@@ -468,8 +512,8 @@ function applyEnumeration(board: SeenBoard, work: Work, flags: SolverMove[], rev
         if (!viableCounts.has(group.count)) continue;
         saw = true;
         // always 位：这个雷数下每一种布雷都是雷。ever 位：至少有一种布雷是雷。
-        const certainMine = (group.always & (1 << bit)) !== 0;
-        const possibleMine = (group.ever & (1 << bit)) !== 0;
+        const certainMine = (group.always & (1n << BigInt(bit))) !== 0n;
+        const possibleMine = (group.ever & (1n << BigInt(bit))) !== 0n;
         if (!certainMine) alwaysMine = false;
         if (possibleMine) everMine = true;
       }

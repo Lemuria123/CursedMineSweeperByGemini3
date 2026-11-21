@@ -56,19 +56,23 @@ export class GameRecorder {
     this.actions.push(action);
   }
 
-  /**
-   * Build the full payload ready for encryption and submission.
-   */
-  buildPayload(nonce: string, rows: number, cols: number, mines: number, prayersUsed: number): GameDataPayload {
+  /** Capture a completed game before waiting on the network. */
+  snapshot(rows: number, cols: number, mines: number, prayersUsed: number): Omit<GameDataPayload, 'nonce'> {
     const mineSeed = `${rows}-${cols}-${mines}-${this.firstClickRow}-${this.firstClickCol}${this.seedSuffix ? '-' + this.seedSuffix : ''}`;
     return {
       version: CURRENT_REPLAY_VERSION,
-      nonce,
       grid: { rows, cols, mines },
       mine_seed: mineSeed,
-      actions: this.actions,
+      actions: this.actions.map(action => ({
+        ...action,
+        ...(action.initial_flags && { initial_flags: action.initial_flags.map(flag => ({ ...flag })) }),
+      })),
       prayers_used: prayersUsed,
       total_time_ms: Date.now() - this.startTime,
     };
+  }
+
+  buildPayload(nonce: string, rows: number, cols: number, mines: number, prayersUsed: number): GameDataPayload {
+    return { ...this.snapshot(rows, cols, mines, prayersUsed), nonce };
   }
 }

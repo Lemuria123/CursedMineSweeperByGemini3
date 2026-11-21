@@ -44,6 +44,6 @@ docker compose up -d
 
 - `ENCRYPTION_KEY`：游戏 API 的解密密钥，默认与 `start-dev-server.bat` 中的本地开发密钥相同。
 - `VITE_ENCRYPTION_KEY`：传给前端，必须与 `ENCRYPTION_KEY` 相同，否则提交成绩无法解密。
-- `ADMIN_TOKEN`：管理后台登录令牌，默认 `admin`。
+- `ADMIN_TOKEN`：显式设置随机管理令牌后才启动管理后台。Compose 在宿主机只将后台端口绑定到 `127.0.0.1`。
 
 可用环境变量覆盖上述三项，不改端口。

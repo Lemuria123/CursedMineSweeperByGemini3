@@ -415,9 +415,6 @@ export const GrimoireModal: React.FC<GrimoireModalProps> = ({ isOpen, onClose, d
               )}
             </div>
 
-            <div className="flex-none mt-4 pt-3 border-t border-slate-800 text-center text-slate-500 text-[10px] uppercase tracking-widest font-bold">
-              {t('grimoire.recordsFooter')}
-            </div>
           </motion.div>
     </div>
   );

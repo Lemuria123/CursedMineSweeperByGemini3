@@ -41,10 +41,17 @@ function scrollCut(viewport: RgbaImage): number {
   return findResetFace(viewport, anchor).y + 70;
 }
 
+function needsVerticalStitch(image: { width: number; height: number }, frame: { x: number; y: number; w: number; h: number }, margin = 6): boolean {
+  // 左右贴边不需要竖向滚轮；误触发会每步 wheel，有头模式就像整屏在抖。
+  // 视口已经够高时（默认 1900）Hard 25 行也能一屏装下，直接跳过拼图。
+  if (image.height >= 1700) return false;
+  return frame.y <= margin || frame.y + frame.h >= image.height - margin;
+}
+
 export async function grabPlayfield(session: GameSession): Promise<Playfield> {
   const viewport = await session.screenshot();
   const grid = findGrid(viewport);
-  if (!grid || !frameTouchesEdge(viewport, grid.frame)) {
+  if (!grid || !needsVerticalStitch(viewport, grid.frame)) {
     return {
       image: viewport,
       viewport,

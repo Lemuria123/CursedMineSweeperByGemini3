@@ -79,7 +79,7 @@ echo ============================================
 echo   All services started!
 echo     Frontend:  http://localhost:5173
 echo     Game API:  http://localhost:38001
-echo     Admin:     http://localhost:38002  ^(password: admin^)
+if defined ADMIN_TOKEN echo     Admin:     http://localhost:38002
 echo ============================================
 echo.
 echo Close the console windows to stop services,
