@@ -18,6 +18,11 @@
     },
     "baseUrl": "."
   },
+  "ts-node": {
+    "moduleTypes": {
+      "../utils/recorder.ts": "cjs"
+    }
+  },
   "include": ["src/**/*.ts", "../shared/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -3,27 +3,40 @@
 // Design:
 // - Reconstructs the deterministic mine layout from mine_seed.
 // - Replays all actions using shared gameLogic (including CSP).
-// - CSP uses Math.random() so outcomes may differ from the client,
-//   but the server accepts its own simulation as the ground truth.
+// - Uses the client's seeded random stream and the recording's prayer rules.
 // - Validates: (1) action legality, (2) prayers match, (3) final state is won.
 
 import { CellData } from '../../shared/types';
 import {
-  createEmptyGrid,
-  cloneGrid,
   revealCellLogic,
   getChordTargets,
   checkWin,
 } from '../../shared/gameLogic';
 import { deterministicPlaceMines, createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
-import { GameSubmission, GameAction, VerifyResult } from './types';
+import { GameSubmission, GameAction, GridConfig, VerifyResult } from './types';
+
+export function createReplayBoard(grid: GridConfig, mineSeed: string, firstReveal: GameAction): CellData[][] | null {
+  const { row, col, initial_flags } = firstReveal;
+  if (initial_flags !== undefined && !Array.isArray(initial_flags)) return null;
+
+  const board = deterministicPlaceMines(grid.rows, grid.cols, grid.mines, row, col, mineSeed);
+  for (const flag of initial_flags ?? []) {
+    if (!flag || !Number.isInteger(flag.row) || !Number.isInteger(flag.col)) return null;
+    if (flag.row === row && flag.col === col) return null;
+
+    const cell = board[flag.row]?.[flag.col];
+    if (cell?.status !== 'hidden') return null;
+    cell.status = 'flagged';
+  }
+  return board;
+}
 
 /**
  * Verify a game submission by replaying all actions.
  * Returns { valid: true } if the game is legitimate.
  */
 export function verifySubmission(submission: GameSubmission): VerifyResult {
-  const { grid: gridConfig, mine_seed, actions, prayers_used } = submission;
+  const { grid: gridConfig, mine_seed, actions, prayers_used, version = 1 } = submission;
 
   // ── Validate actions array ──
   if (!actions || actions.length === 0) {
@@ -53,15 +66,8 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
   }
 
   // ── Reconstruct mine layout ──
-  const emptyGrid = createEmptyGrid(gridConfig.rows, gridConfig.cols);
-  let board = deterministicPlaceMines(
-    gridConfig.rows,
-    gridConfig.cols,
-    gridConfig.mines,
-    firstAction.row,
-    firstAction.col,
-    mine_seed,
-  );
+  let board = createReplayBoard(gridConfig, mine_seed, firstAction);
+  if (!board) return { valid: false, reason: 'invalid initial flags' };
 
   // ── Game state ──
   let status: 'playing' | 'won' | 'lost' = 'playing';
@@ -88,7 +94,7 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
     switch (action.type) {
       case 'first_reveal': {
         // first_reveal: placeMines already done above, now reveal
-        const result = revealCellLogic(board, action.row, action.col, true, false, cspRng);
+        const result = revealCellLogic(board, action.row, action.col, true, false, cspRng, undefined, version);
         board = result.grid;
         // first click is always safe (3x3 safe zone)
         break;
@@ -96,7 +102,7 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
 
       case 'reveal': {
         const isPraying = action.prayed === true;
-        const result = revealCellLogic(board, action.row, action.col, false, isPraying, cspRng);
+        const result = revealCellLogic(board, action.row, action.col, false, isPraying, cspRng, undefined, version);
         board = result.grid;
         if (result.prayerConsumed) prayerCount++;
         if (result.exploded) {
@@ -131,7 +137,8 @@ export function verifySubmission(submission: GameSubmission): VerifyResult {
         const targets = getChordTargets(board, action.row, action.col);
         const isPraying = action.prayed === true;
         for (const t of targets) {
-          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng);
+          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng, undefined, version);
+          if (result.prayerConsumed) prayerCount++;
           board = result.grid;
           if (result.exploded) {
             status = 'lost';

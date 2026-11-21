@@ -15,9 +15,10 @@ export {
 import { CellData } from '../types';
 import {
   revealCellLogic as sharedRevealCellLogic,
+  type RearrangementAttempt,
 } from '../shared/gameLogic';
 
-const preserveRefs = (original: CellData[][], modified: CellData[][]): CellData[][] => {
+export const preserveRefs = (original: CellData[][], modified: CellData[][]): CellData[][] => {
   return original.map((row, r) =>
     row.map((cell, c) => {
       const mod = modified[r][c];
@@ -42,7 +43,8 @@ export const revealCellLogic = (
   isFirstClick: boolean,
   isPraying: boolean,
   rng?: () => number,
+  observeAttempt?: (attempt: RearrangementAttempt) => void,
 ): { grid: CellData[][]; exploded: boolean; prayerConsumed: boolean } => {
-  const result = sharedRevealCellLogic(grid, row, col, isFirstClick, isPraying, rng);
+  const result = sharedRevealCellLogic(grid, row, col, isFirstClick, isPraying, rng, observeAttempt);
   return { ...result, grid: preserveRefs(grid, result.grid) };
 };

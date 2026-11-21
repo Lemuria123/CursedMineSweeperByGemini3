@@ -15,8 +15,9 @@ import {
   getChordTargets,
   checkWin,
 } from '../../shared/gameLogic';
-import { deterministicPlaceMines, createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
+import { createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
 import { CellData } from '../../shared/types';
+import { createReplayBoard } from './verify';
 
 const app = express();
 app.use(express.json());
@@ -291,13 +292,23 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: `Decrypt failed: ${e.message}` });
   }
 
-  const { grid: gridConfig, mine_seed, actions, prayers_used } = submission;
+  const { grid: gridConfig, mine_seed, actions, prayers_used, version = 1 } = submission;
   if (!actions || actions.length === 0) {
     return res.status(400).json({ error: 'No actions in record' });
   }
 
   const firstAction = actions[0];
-  let board = deterministicPlaceMines(gridConfig.rows, gridConfig.cols, gridConfig.mines, firstAction.row, firstAction.col, mine_seed);
+  let board = createReplayBoard(gridConfig, mine_seed, firstAction);
+  if (!board) return res.status(400).json({ error: 'Invalid initial flags' });
+
+  // Capture the state immediately before the first reveal, including pre-game flags.
+  const initialSnapshot = board.map(row => row.map(cell => ({
+    status: cell.status,
+    isMine: cell.isMine,
+    neighborMines: cell.neighborMines,
+    isExploded: false,
+    isMisflagged: false,
+  })));
   const cspRng = createRNG(hashSeed(mine_seed + '-csp'));
 
   // Replay and capture board state at each step
@@ -311,13 +322,13 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
 
     switch (action.type) {
       case 'first_reveal': {
-        const result = revealCellLogic(board, action.row, action.col, true, false, cspRng);
+        const result = revealCellLogic(board, action.row, action.col, true, false, cspRng, undefined, version);
         board = result.grid;
         break;
       }
       case 'reveal': {
         const isPraying = action.prayed === true;
-        const result = revealCellLogic(board, action.row, action.col, false, isPraying, cspRng);
+        const result = revealCellLogic(board, action.row, action.col, false, isPraying, cspRng, undefined, version);
         board = result.grid;
         if (result.prayerConsumed) prayerCount++;
         if (result.exploded) status = 'lost';
@@ -337,7 +348,8 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
         const targets = getChordTargets(board, action.row, action.col);
         const isPraying = action.prayed === true;
         for (const t of targets) {
-          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng);
+          const result = revealCellLogic(board, t.r, t.c, false, isPraying, cspRng, undefined, version);
+          if (result.prayerConsumed) prayerCount++;
           board = result.grid;
           if (result.exploded) { status = 'lost'; break; }
         }
@@ -357,16 +369,6 @@ app.get('/api/admin/record/:id', requireAdmin, (req, res) => {
     })));
     steps.push({ action, board: snapshot });
   }
-
-  // Also show initial board (before any action)
-  const initialBoard = deterministicPlaceMines(gridConfig.rows, gridConfig.cols, gridConfig.mines, firstAction.row, firstAction.col, mine_seed);
-  const initialSnapshot = initialBoard.map(row => row.map(cell => ({
-    status: cell.status,
-    isMine: cell.isMine,
-    neighborMines: cell.neighborMines,
-    isExploded: false,
-    isMisflagged: false,
-  })));
 
   res.json({
     id: req.params.id,

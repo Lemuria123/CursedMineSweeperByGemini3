@@ -1,10 +1,12 @@
+import { revealInBrowser } from './utils/browserReveal';
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Settings, BookOpen } from 'lucide-react';
 import { GameState, Difficulty, GameStatus, CellStatus } from './types';
-import { createEmptyGrid, placeMines, revealCellLogic, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
+import { createEmptyGrid, placeMines, revealAllMines, checkWin, getChordTargets, calculateRecommendedMines, getNeighbors } from './utils/gameLogic';
 import { createRNG, hashSeed } from './shared/deterministicPlaceMines';
+import type { RearrangementAttempt } from './shared/gameLogic';
 import { Board } from './components/Board';
 import { GameHeader } from './components/GameHeader';
 import { SettingsModal } from './components/SettingsModal';
@@ -15,6 +17,7 @@ import { ensureAccount } from './utils/auth';
 import { setNickname, getNonce, submitGame, getConfig } from './utils/api';
 import { encrypt } from './utils/encrypt';
 import { SKIN_STORAGE_KEY, SkinId, isSkinId } from './utils/skins';
+import { saveRearrangementStats } from './utils/rearrangementStats';
 
 // Updated logic: Default mines are now calculated based on the new density formula.
 // Easy: 9x9 (81) -> ~21 mines
@@ -72,6 +75,8 @@ const App: React.FC = () => {
   // 使用 ref 避免回调函数中的闭包陈旧问题
   const prayerRewardThresholdRef = useRef<number>(0);
   // 胜利后的账号注册和成绩提交是异步的。组件卸载后此标记为 false，避免再打开昵称框。
+  const activeClick = useRef<AbortController | null>(null);
+  const [prayerMessage, setPrayerMessage] = useState('');
   const isMountedRef = useRef(true);
   const [showNicknamePrompt, setShowNicknamePrompt] = useState(false);
   const [nickname, setNicknameLocal] = useState('');
@@ -94,6 +99,7 @@ const App: React.FC = () => {
 
     return () => {
       isMountedRef.current = false;
+      activeClick.current?.abort();
     };
   }, []);
 
@@ -101,7 +107,7 @@ const App: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDownRef = useRef(false);
   const isDraggingRef = useRef(false);
-  const cspRngRef = useRef<(() => number) | null>(null); // seeded CSP RNG, matches backend
+  const cspRngRef = useRef<ReturnType<typeof createRNG> | null>(null); // seeded CSP RNG, matches backend
   const startPosRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
   // 将棋盘滚动到可视区域中心；同步执行 scrollTo，以便 useLayoutEffect 在绘制前完成居中
@@ -115,6 +121,9 @@ const App: React.FC = () => {
 
   // Initialize Game
   const initGame = useCallback((diff: Difficulty = difficulty) => {
+    activeClick.current?.abort();
+    activeClick.current = null;
+    setPrayerMessage('');
     recorderRef.current = new GameRecorder();
     setGameState({
       grid: createEmptyGrid(diff.rows, diff.cols),
@@ -156,12 +165,39 @@ const App: React.FC = () => {
   }, [gameState.status]);
 
   const handleTogglePrayer = () => {
+      if (activeClick.current) return;
       if (gameState.status !== 'playing' && gameState.status !== 'idle') return;
       setGameState(prev => ({ ...prev, isPraying: !prev.isPraying }));
   };
 
   // Click Handler
-  const handleCellClick = (row: number, col: number) => {
+  const handleCellClick = async (row: number, col: number) => {
+    if (activeClick.current) return;
+    const click = new AbortController();
+    activeClick.current = click;
+    const rngState = cspRngRef.current?.snapshot();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setPrayerMessage('');
+    const onExact = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setPrayerMessage('祈祷求解中…'), 150);
+    };
+    try {
+      await performCellClick(row, col, click.signal, onExact);
+      if (!click.signal.aborted) setPrayerMessage('');
+    } catch (error) {
+      if (!click.signal.aborted) {
+        if (rngState !== undefined) cspRngRef.current = createRNG(rngState);
+        setPrayerMessage('开格中断，请再点一次');
+        console.error(error);
+      }
+    } finally {
+      clearTimeout(timer);
+      if (activeClick.current === click) activeClick.current = null;
+    }
+  };
+
+  const performCellClick = async (row: number, col: number, signal: AbortSignal, onExact: () => void) => {
     if (gameState.status === 'won' || gameState.status === 'lost') return;
 
     let newGrid = [...gameState.grid];
@@ -179,7 +215,10 @@ const App: React.FC = () => {
       cspRngRef.current = createRNG(hashSeed(mineSeed + '-csp'));
       newGrid = placeMines(newGrid, gameState.difficulty.mines, row, col, createRNG(hashSeed(mineSeed)));
       newStatus = 'playing';
-      recorderRef.current.start(row, col, seedSuffix);
+      const initialFlags = newGrid.flat()
+        .filter(cell => cell.status === 'flagged')
+        .map(({ row, col }) => ({ row, col }));
+      recorderRef.current.start(row, col, seedSuffix, initialFlags);
     }
 
     // Capture prayer state before logic runs to determine if it was a failure
@@ -187,16 +226,17 @@ const App: React.FC = () => {
 
     // Logic for Revealed vs Hidden cells
     let actionTaken = false;
+    const rearrangements: RearrangementAttempt[] = [];
+    const observeAttempt = (attempt: RearrangementAttempt) => { rearrangements.push(attempt); };
     if (cell.status === 'revealed') {
         // --- CHORDING LOGIC ---
         const targets = getChordTargets(newGrid, row, col);
         
         if (targets.length > 0) {
             actionTaken = true;
-            // Record chord with prayer state so backend can replicate CSP
-            recorderRef.current.record('chord', row, col, newIsPraying);
             for (const target of targets) {
-                const result = revealCellLogic(newGrid, target.r, target.c, false, newIsPraying, cspRngRef.current!);
+                const result = await revealInBrowser(newGrid, target.r, target.c, false, newIsPraying, cspRngRef.current!, observeAttempt, signal, onExact);
+                if (signal.aborted) return;
                 newGrid = result.grid; 
                 if (result.prayerConsumed) newPrayersUsed++;
                 if (result.exploded) {
@@ -231,12 +271,8 @@ const App: React.FC = () => {
     } else {
         // --- STANDARD REVEAL LOGIC ---
         actionTaken = true;
-        // first_reveal is already recorded by recorderRef.current.start(),
-        // do not record a second reveal for the same cell
-        if (gameState.status !== 'idle') {
-          recorderRef.current.record('reveal', row, col, newIsPraying);
-        }
-        const result = revealCellLogic(newGrid, row, col, gameState.status === 'idle', newIsPraying, cspRngRef.current!);
+        const result = await revealInBrowser(newGrid, row, col, gameState.status === 'idle', newIsPraying, cspRngRef.current!, observeAttempt, signal, onExact);
+        if (signal.aborted) return;
         newGrid = result.grid;
         if (result.prayerConsumed) newPrayersUsed++;
         if (result.exploded) {
@@ -244,6 +280,10 @@ const App: React.FC = () => {
             newGrid = revealAllMines(newGrid);
             newGrid[row][col].isExploded = true;
         }
+    }
+
+    if (actionTaken && gameState.status !== 'idle') {
+      recorderRef.current.record(cell.status === 'revealed' ? 'chord' : 'reveal', row, col, newIsPraying);
     }
 
     // Auto-disable prayer after an action
@@ -294,11 +334,13 @@ const App: React.FC = () => {
       prayersUsed: newPrayersUsed,
       isPraying: newIsPraying
     }));
+    saveRearrangementStats(rearrangements);
   };
 
   // Right Click (Flag) Handler
   const handleRightClick = (row: number, col: number, e: React.MouseEvent) => {
     e.preventDefault();
+    if (activeClick.current) return;
     if (gameState.status !== 'playing' && gameState.status !== 'idle') return;
 
     const cell = gameState.grid[row][col];
@@ -448,6 +490,7 @@ const App: React.FC = () => {
       >
           {/* 顶部不再留白。滚到最上时棋盘就贴着顶栏，不会再多出一截空档 */}
           <div className="min-w-fit min-h-fit px-8 pb-8 lg:px-12 lg:pb-12 m-auto w-fit h-fit block">
+            {prayerMessage && <div role="status">{prayerMessage}</div>}
             <Board 
                 grid={gameState.grid} 
                 gameStatus={gameState.status}

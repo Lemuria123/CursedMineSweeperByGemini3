@@ -1,3 +1,5 @@
+import type { ReplayVersion } from '../../shared/types';
+
 // Types for game submission data (encrypted payload).
 
 export interface GridConfig {
@@ -12,10 +14,11 @@ export interface GameAction {
   col: number;
   ts: number;        // ms offset from first click
   prayed?: boolean;  // only for 'reveal' type — whether pray mode was active
+  initial_flags?: { row: number; col: number }[]; // active flags before first_reveal
 }
 
 export interface GameSubmission {
-  version: 1;
+  version: ReplayVersion;
   nonce: string;
   grid: GridConfig;
   mine_seed: string;   // deterministic mine layout seed

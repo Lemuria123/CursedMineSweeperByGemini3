@@ -1,7 +1,14 @@
 // Shared game logic — pure functions used by both frontend and server replay verification.
 // No React-specific code here (e.g. preserveRefs lives in the frontend wrapper).
 
-import { CellData } from './types';
+import { CURRENT_REPLAY_VERSION, type CellData, type ReplayVersion } from './types';
+import { exactPrayerLayout } from './exactPrayer';
+import {
+  findBoundedCompensation,
+  findThreeCellCompensation,
+  type CompensationConstraint as RevealedConstraint,
+  type CompensationDelta,
+} from './compensationSearch';
 
 export const DIRECTIONS = [
   [-1, -1], [-1, 0], [-1, 1],
@@ -187,29 +194,50 @@ export const placeMines = (
   return newGrid;
 };
 
-// 单次重排最多展开这么多个分支。用完仍无解就整步回滚，避免主线程被指数搜索卡住。
-const MAX_SOLVE_NODES = 4000;
+// 新录像在数字偏好搜索结束后直接进入精确求解。旧录像沿用录制时的搜索顺序。
+const MAX_CURSE_SOLVE_NODES = 4000;
+const MAX_PREFERRED_PRAYER_NODES = 3000;
+const LEGACY_PRAYER_SOLVE_NODES = MAX_PREFERRED_PRAYER_NODES + 3000;
 // 沿已翻开约束向外扩展的变量上限。超出的格子视为固定，不再翻转。
 const MAX_FRONTIER_SIZE = 50;
+const MAX_PRAYER_RETRY_FRONTIER_SIZE = 112;
+const MAX_PRAYER_RETRY_NODES = 768;
+const MAX_PREFERRED_PRAYER_RETRY_NODES = 192;
+const MAX_COMPENSATION_BLOCKS = 4;
+const MAX_COMPENSATION_BLOCK_SIZE = 10;
+const MAX_SHORTAGE_PROOF_NODES = 200;
+const MAX_THREE_CELL_CHECKS = 1500;
+const MAX_BOUNDED_COMPENSATION_CHANGES = 8;
+const MAX_BOUNDED_COMPENSATION_NODES = 256;
 
 interface FrontierVar {
   r: number;
   c: number;
 }
 
-interface RevealedConstraint {
-  need: number;
-  varIdxs: number[];
-  fixed: number;
-}
-
 interface SolveBudget {
   used: number;
+}
+
+interface ConstrainedSearchOptions {
+  budget?: SolveBudget;
+  onlyCompensation?: boolean;
+  retryFrontier?: boolean;
 }
 
 interface SolvedLayout {
   assignment: Int8Array;
   freeCount: number;
+}
+
+interface CompensationLayout {
+  cells: FrontierVar[];
+  assignment: Int8Array;
+}
+
+export interface RearrangementAttempt {
+  kind: 'curse' | 'prayer';
+  outcome: 'success' | 'isolated_shortage' | 'budget_exhausted' | 'frontier_limit' | 'unclassified';
 }
 
 // 三条路径共用同一次快照。入口负责保存和回滚，路径只改 isMine，成败交给 commit。
@@ -223,6 +251,8 @@ interface RearrangeCtx {
   forceMine: boolean;
   rng: () => number;
   originalTotal: number;
+  preferredPrayerOnly: boolean;
+  observeFailure: boolean;
   restore: () => void;
   commit: () => boolean;
 }
@@ -258,7 +288,7 @@ const neighborhoodOf = (rows: number, cols: number, row: number, col: number): F
 };
 
 // 诅咒且目标格四周没有已翻开数字：和一颗孤立雷对调。对不上就不动棋盘。
-const swapInIsolatedMine = (ctx: RearrangeCtx): boolean => {
+const swapInIsolatedMine = (ctx: RearrangeCtx): RearrangementAttempt['outcome'] => {
   const { grid, rows, cols, targetRow, targetCol, rng, commit } = ctx;
 
   const candidates: FrontierVar[] = [];
@@ -271,15 +301,15 @@ const swapInIsolatedMine = (ctx: RearrangeCtx): boolean => {
       candidates.push({ r, c });
     }
   }
-  if (candidates.length === 0) return false;
+  if (candidates.length === 0) return 'isolated_shortage';
   const pick = candidates[Math.floor(rng() * candidates.length)];
   grid[targetRow][targetCol].isMine = true;
   grid[pick.r][pick.c].isMine = false;
-  return commit();
+  return commit() ? 'success' : 'unclassified';
 };
 
 // 祈祷且没有已翻开约束：按离散正态抽周围雷数 k，只把差额搬到邻域外的孤立格。
-const resampleSafeNeighborhood = (ctx: RearrangeCtx): boolean => {
+const resampleSafeNeighborhood = (ctx: RearrangeCtx): RearrangementAttempt['outcome'] => {
   const { grid, rows, cols, targetRow, targetCol, rng, originalTotal, restore, commit } = ctx;
   const target = grid[targetRow][targetCol];
   const neighborCoords = (): FrontierVar[] => neighborhoodOf(rows, cols, targetRow, targetCol);
@@ -320,6 +350,7 @@ const resampleSafeNeighborhood = (ctx: RearrangeCtx): boolean => {
   const sigma = Math.sqrt(degree * p * (1 - p));
   const order = discreteNormalOrder(fixedMines, fixedMines + variable.length, mu, sigma, rng);
   const targetWasMine = target.isMine ? 1 : 0;
+  let triedLayout = false;
 
   for (const k of order) {
     const minesInNeighborhood = k - fixedMines;
@@ -327,6 +358,7 @@ const resampleSafeNeighborhood = (ctx: RearrangeCtx): boolean => {
     const outsideNeeded = outsideMines + targetWasMine + variableMines - minesInNeighborhood;
     if (outsideNeeded < 0 || outsideNeeded > outside.length) continue;
 
+    triedLayout = true;
     restore();
     grid[targetRow][targetCol].isMine = false;
     const varied = shuffleCopy(variable, rng);
@@ -342,30 +374,42 @@ const resampleSafeNeighborhood = (ctx: RearrangeCtx): boolean => {
       const mines = shuffleCopy(outside.filter((cell) => grid[cell.r][cell.c].isMine), rng);
       for (let i = 0; i < -outsideDelta; i++) grid[mines[i].r][mines[i].c].isMine = false;
     }
-    if (commit()) return true;
+    if (commit()) return 'success';
   }
 
   restore();
-  return false;
+  return triedLayout ? 'unclassified' : 'isolated_shortage';
 };
 
 // 直接交换覆盖不了时，沿已翻开约束搜索目标所在的那一块。
-const solveConstrained = (ctx: RearrangeCtx): boolean => {
+const solveConstrained = (
+  ctx: RearrangeCtx,
+  { budget = { used: 0 }, onlyCompensation = false, retryFrontier = false }: ConstrainedSearchOptions = {},
+): RearrangementAttempt['outcome'] => {
   const { grid, rows, cols, targetRow, targetCol, forceMine, rng, originalTotal, restore, commit } = ctx;
+  const frontierLimit = retryFrontier ? MAX_PRAYER_RETRY_FRONTIER_SIZE : MAX_FRONTIER_SIZE;
+  const fastBudget = ctx.preferredPrayerOnly ? MAX_PREFERRED_PRAYER_NODES : LEGACY_PRAYER_SOLVE_NODES;
+  const prayerNodeLimit = retryFrontier ? Math.min(fastBudget, budget.used + MAX_PRAYER_RETRY_NODES) : fastBudget;
   const inBounds = (r: number, c: number): boolean => r >= 0 && r < rows && c >= 0 && c < cols;
   const neighborCoords = (): FrontierVar[] => neighborhoodOf(rows, cols, targetRow, targetCol);
   const density = (): number => originalTotal / (rows * cols);
 
   // 从目标格沿已翻开约束做 BFS，得到的就是目标所在的那一块。
   // 其他不连通的区域保持原样，搜索代价按这一块计算，而不是按整盘相乘。
+  let frontierTruncated = false;
+  let shortageWitness = false;
+  let rejectedLayout = false;
+  let hasSafeRange = false;
+  const trackShortage = !forceMine || ctx.observeFailure;
+  const compensationWitnesses = forceMine || ctx.preferredPrayerOnly ? null : new Map<number, Int8Array>();
   const vars = collectTargetComponent();
   const targetIdx = vars.findIndex((v) => v.r === targetRow && v.c === targetCol);
-  if (targetIdx < 0) return false;
+  if (targetIdx < 0) return 'unclassified';
 
   const varIndex = new Map<string, number>();
   vars.forEach((v, i) => varIndex.set(`${v.r}-${v.c}`, i));
 
-  const constraints = buildConstraints(varIndex);
+  const constraints = buildConstraints(vars, varIndex);
   const neighbors = neighborCoords();
   const neighborVarIdxs: number[] = [];
   const freeNeighbors: FrontierVar[] = [];
@@ -390,12 +434,13 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
   for (const n of freeNeighbors) excluded.add(`${n.r}-${n.c}`);
   const isolatedMines: FrontierVar[] = [];
   const isolatedSafes: FrontierVar[] = [];
-  let initialChangedMines = 0;
+  let originalFreeMines = 0;
+  for (const n of freeNeighbors) {
+    if (grid[n.r][n.c].isMine) originalFreeMines++;
+  }
+  let initialChangedMines = originalFreeMines;
   for (const v of vars) {
     if (grid[v.r][v.c].isMine) initialChangedMines++;
-  }
-  for (const n of freeNeighbors) {
-    if (grid[n.r][n.c].isMine) initialChangedMines++;
   }
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -407,47 +452,243 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
     }
   }
 
-  const budget: SolveBudget = { used: 0 };
+  const minChangedMines = initialChangedMines - isolatedSafes.length;
+  const maxChangedMines = initialChangedMines + isolatedMines.length;
   const neighborVarSet = new Uint8Array(vars.length);
   for (const idx of neighborVarIdxs) neighborVarSet[idx] = 1;
 
+  if (onlyCompensation) {
+    // The isolated target has no revealed constraints and is the only variable in its block.
+    noteShortage(new Int8Array(vars.length));
+    return failed();
+  }
+
   if (!forceMine) {
     const range = estimateSafeRange();
-    if (!range) {
-      restore();
-      return false;
-    }
+    if (!range) return failed();
+    hasSafeRange = true;
     const degree = neighbors.length;
     const p = density();
     const mu = p * degree;
     const sigma = Math.sqrt(degree * p * (1 - p));
     const order = discreteNormalOrder(range.kMin, range.kMax, mu, sigma, rng);
+    // Reserve most of the retry allowance for any legal digit, even with a short remaining budget.
+    const localPreferredLimit = retryFrontier
+      ? budget.used + Math.floor((prayerNodeLimit - budget.used) *
+          MAX_PREFERRED_PRAYER_RETRY_NODES / MAX_PRAYER_RETRY_NODES)
+      : prayerNodeLimit;
+    const preferredLimit = Math.min(MAX_PREFERRED_PRAYER_NODES, localPreferredLimit);
     for (const k of order) {
-      const solved = search(k);
-      if (solved === 'budget') break;
-      if (solved && applyLayout(solved)) return true;
+      const solved = search(k, preferredLimit);
+      if (solved === 'budget') {
+        if (budget.used >= prayerNodeLimit) return failed(true);
+        break;
+      }
+      if (solved && applyLayout(solved)) return 'success';
       restore();
     }
+    if (!ctx.preferredPrayerOnly && budget.used >= preferredLimit) {
+      // 两段共用计数器。剩余预算内接受能安全翻开目标格的任意数字。
+      const solved = search(null, prayerNodeLimit);
+      if (solved && solved !== 'budget' && applyLayout(solved)) return 'success';
+      return failed(solved === 'budget');
+    }
+    return failed();
+  }
+
+  const solved = search(null, MAX_CURSE_SOLVE_NODES);
+  if (solved && solved !== 'budget' && applyLayout(solved)) return 'success';
+  return failed(solved === 'budget');
+
+  function failed(exhausted = false): RearrangementAttempt['outcome'] {
     restore();
+    if (exhausted) return 'budget_exhausted';
+    if (frontierTruncated) return 'frontier_limit';
+    if (ctx.preferredPrayerOnly) return shortageWitness ? 'isolated_shortage' : 'unclassified';
+    if (!shortageWitness && hasSafeRange && !rejectedLayout && budget.used < prayerNodeLimit) {
+      // Mine-count pruning can reject a partial assignment before its legal flip is visible.
+      const proof = search(null, Math.min(prayerNodeLimit, budget.used + MAX_SHORTAGE_PROOF_NODES), false);
+      if (proof && proof !== 'budget') noteShortage(proof.assignment);
+    }
+    if (!shortageWitness || rejectedLayout) return 'unclassified';
+    if (compensationWitnesses?.size && budget.used < prayerNodeLimit &&
+        tryCrossBlockCompensation(compensationWitnesses)) return 'success';
+    return 'isolated_shortage';
+  }
+
+  function noteShortage(assignment: Int8Array): void {
+    if (!trackShortage || frontierTruncated || (forceMine && shortageWitness) || assignment.includes(-1)) return;
+    const mines = assignment.reduce((sum, value) => sum + value, 0);
+    // A preferred digit can fail even when some other digit would fit the isolated pool.
+    if (minChangedMines <= mines + freeNeighbors.length && mines <= maxChangedMines) return;
+    if (compensationWitnesses?.has(mines) || !constraintsSatisfied(assignment)) return;
+    shortageWitness = true;
+    compensationWitnesses?.set(mines, new Int8Array(assignment));
+  }
+
+  function tryCrossBlockCompensation(witnesses: ReadonlyMap<number, Int8Array>): boolean {
+    const blocks = collectCompensationBlocks();
+    let combinations = new Map<number, CompensationLayout[]>([[0, []]]);
+    const smallBlocks = blocks.filter(block => block.length <= MAX_COMPENSATION_BLOCK_SIZE);
+    for (const block of smallBlocks.slice(0, MAX_COMPENSATION_BLOCKS)) {
+      if (budget.used >= prayerNodeLimit) break;
+      const layouts = enumerateCompensationBlock(block);
+      const combined = new Map(combinations);
+      for (const [previousDelta, previousLayouts] of combinations) {
+        for (const [delta, assignment] of layouts) {
+          const totalDelta = previousDelta + delta;
+          if (!combined.has(totalDelta)) {
+            combined.set(totalDelta, [...previousLayouts, { cells: block, assignment }]);
+          }
+        }
+      }
+      combinations = combined;
+
+      for (const [mines, assignment] of witnesses) {
+        for (const [delta, moves] of combinations) {
+          if (delta === 0) continue;
+          const freeCount = chooseFreeMineCount(mines + delta);
+          if (freeCount !== null && applyLayout({ assignment, freeCount }, moves)) return true;
+        }
+      }
+    }
+
+    return budget.used < prayerNodeLimit && tryLargerBlockCompensation(witnesses, blocks);
+  }
+
+  function tryLargerBlockCompensation(witnesses: ReadonlyMap<number, Int8Array>, blocks: FrontierVar[][]): boolean {
+    const candidates = new Map<CompensationDelta, SolvedLayout>();
+    for (const delta of [1, -1, 2, -2] as const) {
+      for (const [mines, assignment] of witnesses) {
+        const freeCount = chooseFreeMineCount(mines + delta);
+        if (freeCount === null) continue;
+        candidates.set(delta, { assignment, freeCount });
+        break;
+      }
+    }
+    if (candidates.size === 0) return false;
+
+    const largerBlocks = blocks.filter(block => block.length > MAX_COMPENSATION_BLOCK_SIZE);
+    const signatureLimit = Math.min(prayerNodeLimit, budget.used + MAX_THREE_CELL_CHECKS);
+    const prepared: Array<{ cells: FrontierVar[]; original: Int8Array; constraints: RevealedConstraint[] }> = [];
+    for (const cells of largerBlocks) {
+      if (budget.used >= signatureLimit) break;
+      const index = new Map(cells.map((cell, i) => [`${cell.r}-${cell.c}`, i]));
+      const constraints = buildConstraints(cells, index);
+      const original = Int8Array.from(cells, cell => Number(grid[cell.r][cell.c].isMine));
+      prepared.push({ cells, original, constraints });
+      for (const [delta, target] of candidates) {
+        if (delta === -2 || delta === 2) continue;
+        const assignment = findThreeCellCompensation(original, constraints, delta, spendUntil(signatureLimit));
+        if (assignment && applyLayout(target, [{ cells, assignment }])) return true;
+      }
+    }
+
+    for (const { cells, original, constraints } of prepared.slice(0, MAX_COMPENSATION_BLOCKS)) {
+      if (budget.used >= prayerNodeLimit) break;
+      const limit = Math.min(prayerNodeLimit, budget.used + MAX_BOUNDED_COMPENSATION_NODES);
+      for (const [delta, target] of candidates) {
+        const assignment = findBoundedCompensation(
+          original, constraints, delta, MAX_BOUNDED_COMPENSATION_CHANGES, spendUntil(limit),
+        );
+        if (assignment && applyLayout(target, [{ cells, assignment }])) return true;
+      }
+    }
     return false;
   }
 
-  const solved = search(null);
-  if (solved && solved !== 'budget' && applyLayout(solved)) return true;
-  restore();
-  return false;
+  function spendUntil(limit: number): () => boolean {
+    return () => {
+      if (budget.used >= limit) return false;
+      budget.used++;
+      return true;
+    };
+  }
+
+  function collectCompensationBlocks(): FrontierVar[][] {
+    const seen = new Uint8Array(rows * cols);
+    const seenClues = new Uint8Array(rows * cols);
+    for (const v of vars) seen[v.r * cols + v.c] = 1;
+    const blocks: FrontierVar[][] = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (seen[r * cols + c] || grid[r][c].status !== 'hidden' || !hasRevealedNeighbor(grid, r, c)) continue;
+        const block: FrontierVar[] = [{ r, c }];
+        seen[r * cols + c] = 1;
+        for (let i = 0; i < block.length; i++) {
+          for (const clue of neighborhoodOf(rows, cols, block[i].r, block[i].c)) {
+            const clueId = clue.r * cols + clue.c;
+            if (seenClues[clueId] || grid[clue.r][clue.c].status !== 'revealed') continue;
+            seenClues[clueId] = 1;
+            for (const neighbor of neighborhoodOf(rows, cols, clue.r, clue.c)) {
+              const id = neighbor.r * cols + neighbor.c;
+              if (seen[id] || grid[neighbor.r][neighbor.c].status !== 'hidden') continue;
+              seen[id] = 1;
+              block.push(neighbor);
+            }
+          }
+        }
+        blocks.push(block);
+      }
+    }
+    return blocks.sort((a, b) => a.length - b.length);
+  }
+
+  function enumerateCompensationBlock(block: FrontierVar[]): Map<number, Int8Array> {
+    const index = new Map(block.map((cell, i) => [`${cell.r}-${cell.c}`, i]));
+    const equationsByVar = block.map<RevealedConstraint[]>(() => []);
+    for (const constraint of buildConstraints(block, index)) {
+      for (const variable of constraint.varIdxs) equationsByVar[variable].push(constraint);
+    }
+
+    const originalMines = block.filter(cell => grid[cell.r][cell.c].isMine).length;
+    const layouts = new Map<number, Int8Array>();
+    const assignment = new Int8Array(block.length).fill(-1);
+    visit(0, 0);
+    return layouts;
+
+    function visit(index: number, mines: number): void {
+      if (index === assignment.length) {
+        const delta = mines - originalMines;
+        // Keeping a block unchanged is always available without a search branch.
+        if (delta !== 0 && !layouts.has(delta)) layouts.set(delta, new Int8Array(assignment));
+        return;
+      }
+      // External blocks have at most ten cells. Every value tried shares the prayer budget.
+      for (let value = 0; value <= 1 && budget.used < prayerNodeLimit; value++) {
+        budget.used++;
+        assignment[index] = value;
+        const feasible = equationsByVar[index].every(constraint => {
+          let placed = constraint.fixed;
+          let undecided = 0;
+          for (const variable of constraint.varIdxs) {
+            if (assignment[variable] === 1) placed++;
+            else if (assignment[variable] === -1) undecided++;
+          }
+          return placed <= constraint.need && constraint.need <= placed + undecided;
+        });
+        if (feasible) visit(index + 1, mines + value);
+      }
+      assignment[index] = -1;
+    }
+  }
 
   function collectTargetComponent(): FrontierVar[] {
     const list: FrontierVar[] = [];
     const seen = new Set<string>();
     const queue: FrontierVar[] = [];
     const add = (r: number, c: number): void => {
-      if (!inBounds(r, c) || list.length >= MAX_FRONTIER_SIZE) return;
+      if (!inBounds(r, c)) return;
+      if (list.length >= frontierLimit && (!trackShortage || frontierTruncated)) return;
       const cell = grid[r][c];
       // 插旗格不是变量。已翻开格也不是。
       if (cell.status !== 'hidden') return;
       const key = `${r}-${c}`;
       if (seen.has(key)) return;
+      if (list.length >= frontierLimit) {
+        frontierTruncated = true;
+        return;
+      }
       seen.add(key);
       list.push({ r, c });
       queue.push({ r, c });
@@ -469,9 +710,9 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
     return list;
   }
 
-  function buildConstraints(index: Map<string, number>): RevealedConstraint[] {
+  function buildConstraints(frontier: FrontierVar[], index: Map<string, number>): RevealedConstraint[] {
     const map = new Map<string, RevealedConstraint>();
-    for (const v of vars) {
+    for (const v of frontier) {
       for (const [dr, dc] of DIRECTIONS) {
         const nr = v.r + dr;
         const nc = v.c + dc;
@@ -511,21 +752,21 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
     return { kMin: forced, kMax: forced + slots };
   }
 
-  function search(desiredK: number | null): SolvedLayout | 'budget' | null {
+  function search(desiredK: number | null, nodeLimit: number, checkBalance = true): SolvedLayout | 'budget' | null {
     const root = new Int8Array(vars.length).fill(-1);
     root[targetIdx] = forceMine ? 1 : 0;
-    if (!propagate(root, desiredK, false)) return null;
+    if (!propagate(root, desiredK, !checkBalance)) return null;
 
     const stack: Array<{ vi: number; tried: number; options: Array<0 | 1>; snap: Int8Array }> = [];
     const rootVar = pickVar(root);
     if (rootVar < 0) {
-      const freeCount = acceptedFreeCount(root, desiredK);
+      const freeCount = checkBalance ? acceptedFreeCount(root, desiredK) : 0;
       return freeCount === null ? null : { assignment: root, freeCount };
     }
-    stack.push({ vi: rootVar, tried: 0, options: branchOptions(), snap: root });
+    stack.push({ vi: rootVar, tried: 0, options: branchOptions(rootVar), snap: root });
 
     while (stack.length > 0) {
-      if (budget.used >= MAX_SOLVE_NODES) return 'budget';
+      if (budget.used >= nodeLimit) return 'budget';
       const frame = stack[stack.length - 1];
       if (frame.tried >= frame.options.length) {
         stack.pop();
@@ -534,19 +775,23 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
       const trial = new Int8Array(frame.snap);
       trial[frame.vi] = frame.options[frame.tried++];
       budget.used++;
-      if (!propagate(trial, desiredK, false)) continue;
+      if (!propagate(trial, desiredK, !checkBalance)) continue;
       const nextVar = pickVar(trial);
       if (nextVar < 0) {
-        const freeCount = acceptedFreeCount(trial, desiredK);
+        const freeCount = checkBalance ? acceptedFreeCount(trial, desiredK) : 0;
         if (freeCount !== null) return { assignment: trial, freeCount };
         continue;
       }
-      stack.push({ vi: nextVar, tried: 0, options: branchOptions(), snap: trial });
+      stack.push({ vi: nextVar, tried: 0, options: branchOptions(nextVar), snap: trial });
     }
     return null;
   }
 
-  function branchOptions(): Array<0 | 1> {
+  function branchOptions(index: number): Array<0 | 1> {
+    if (retryFrontier) {
+      const { r, c } = vars[index];
+      return grid[r][c].isMine ? [1, 0] : [0, 1];
+    }
     return rng() > 0.5 ? [0, 1] : [1, 0];
   }
 
@@ -580,7 +825,10 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
     for (let guard = 0; guard < limit; guard++) {
       const before = new Int8Array(assignment);
       if (!applyConstraints(assignment)) return false;
-      if (!constraintsOnly && !enforceMineWindow(assignment, desiredK)) return false;
+      if (!constraintsOnly && !enforceMineWindow(assignment, desiredK)) {
+        noteShortage(assignment);
+        return false;
+      }
       let changed = false;
       for (let i = 0; i < assignment.length; i++) {
         if (before[i] !== assignment[i]) {
@@ -615,11 +863,12 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
   }
 
   function enforceMineWindow(assignment: Int8Array, desiredK: number | null): boolean {
-    const low = initialChangedMines - isolatedSafes.length;
-    const high = initialChangedMines + isolatedMines.length;
+    const low = minChangedMines;
+    const high = maxChangedMines;
 
     if (desiredK === null) {
-      return forceRange(assignment, varsIndexList(), low, high);
+      // 自由邻居不进入搜索树，但可以补足雷数下界。
+      return forceRange(assignment, varsIndexList(), low - freeNeighbors.length, high);
     }
 
     // 周围雷数 k = 固定雷 + 连通块里的邻居雷 + 自由邻居雷。自由邻居不进搜索树。
@@ -685,28 +934,34 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
   function acceptedFreeCount(assignment: Int8Array, desiredK: number | null): number | null {
     if (!constraintsSatisfied(assignment)) return null;
     if (assignment[targetIdx] !== (forceMine ? 1 : 0)) return null;
+    let assignedMines = 0;
     for (let i = 0; i < assignment.length; i++) {
-      if (assignment[i] !== 0 && assignment[i] !== 1) return null;
+      if (assignment[i] === 1) assignedMines++;
+      else if (assignment[i] !== 0) return null;
     }
+
+    const minFreeMines = Math.max(0, minChangedMines - assignedMines);
+    const maxFreeMines = Math.min(freeNeighbors.length, maxChangedMines - assignedMines);
+    if (minFreeMines > maxFreeMines) return null;
+    if (desiredK === null) {
+      return Math.max(minFreeMines, Math.min(maxFreeMines, originalFreeMines));
+    }
+
     let neighborPlaced = 0;
     for (const idx of neighborVarIdxs) {
       if (assignment[idx] === 1) neighborPlaced++;
     }
-    let freeCount = 0;
-    if (desiredK !== null) {
-      freeCount = desiredK - fixedNeighborMines - neighborPlaced;
-      if (freeCount < 0 || freeCount > freeNeighbors.length) return null;
-    }
-    let changedMines = freeCount;
-    for (let i = 0; i < assignment.length; i++) {
-      if (assignment[i] === 1) changedMines++;
-    }
-    const diff = changedMines - initialChangedMines;
-    if (diff > isolatedMines.length || -diff > isolatedSafes.length) return null;
-    return freeCount;
+    const freeCount = desiredK - fixedNeighborMines - neighborPlaced;
+    return freeCount >= minFreeMines && freeCount <= maxFreeMines ? freeCount : null;
   }
 
-  function applyLayout(solved: SolvedLayout): boolean {
+  function chooseFreeMineCount(mines: number): number | null {
+    const low = Math.max(0, minChangedMines - mines);
+    const high = Math.min(freeNeighbors.length, maxChangedMines - mines);
+    return low <= high ? Math.max(low, Math.min(high, originalFreeMines)) : null;
+  }
+
+  function applyLayout(solved: SolvedLayout, compensation: CompensationLayout[] = []): boolean {
     restore();
     for (let i = 0; i < vars.length; i++) {
       grid[vars[i].r][vars[i].c].isMine = solved.assignment[i] === 1;
@@ -721,12 +976,20 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
       }
     }
 
+    for (const { cells, assignment } of compensation) {
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        grid[cell.r][cell.c].isMine = assignment[i] === 1;
+      }
+    }
+
     const diff = countAllMines(grid) - originalTotal;
     // diff > 0：这一块雷变多，关掉同样多的孤立雷。
     // diff < 0：这一块雷变少，把同样多的孤立安全格改成雷。
     // 池子不够就放弃，不能带着差额成功返回。
     if (diff > 0) {
       if (isolatedMines.length < diff) {
+        rejectedLayout = true;
         restore();
         return false;
       }
@@ -735,13 +998,16 @@ const solveConstrained = (ctx: RearrangeCtx): boolean => {
     } else if (diff < 0) {
       const need = -diff;
       if (isolatedSafes.length < need) {
+        rejectedLayout = true;
         restore();
         return false;
       }
       const pool = shuffleCopy(isolatedSafes, rng);
       for (let i = 0; i < need; i++) grid[pool[i].r][pool[i].c].isMine = true;
     }
-    return commit();
+    const applied = commit();
+    rejectedLayout ||= !applied;
+    return applied;
   }
 };
 
@@ -759,6 +1025,8 @@ export const rearrangeMines = (
   targetCol: number,
   forceMine: boolean,
   rng: () => number = Math.random,
+  observeAttempt?: (attempt: RearrangementAttempt) => void,
+  version: ReplayVersion = CURRENT_REPLAY_VERSION,
 ): boolean => {
   const rows = grid.length;
   const cols = grid[0].length;
@@ -815,16 +1083,26 @@ export const rearrangeMines = (
     forceMine,
     rng,
     originalTotal,
+    preferredPrayerOnly: !forceMine && version >= 3,
+    observeFailure: observeAttempt !== undefined,
     restore,
     commit,
   };
+  let outcome: RearrangementAttempt['outcome'];
   if (!forceMine && canResampleWithoutConstraints(grid, targetRow, targetCol)) {
-    return resampleSafeNeighborhood(ctx);
+    outcome = resampleSafeNeighborhood(ctx);
+    if (!ctx.preferredPrayerOnly && outcome === 'isolated_shortage') outcome = solveConstrained(ctx, { onlyCompensation: true });
+  } else if (forceMine && !hasRevealedNeighbor(grid, targetRow, targetCol)) {
+    outcome = swapInIsolatedMine(ctx);
+  } else {
+    const budget: SolveBudget = { used: 0 };
+    outcome = solveConstrained(ctx, { budget });
+    if (!forceMine && !ctx.preferredPrayerOnly && outcome === 'frontier_limit' && budget.used < LEGACY_PRAYER_SOLVE_NODES) {
+      outcome = solveConstrained(ctx, { budget, retryFrontier: true });
+    }
   }
-  if (forceMine && !hasRevealedNeighbor(grid, targetRow, targetCol)) {
-    return swapInIsolatedMine(ctx);
-  }
-  return solveConstrained(ctx);
+  observeAttempt?.({ kind: forceMine ? 'curse' : 'prayer', outcome });
+  return outcome === 'success';
 };
 
 // --- Chording ---
@@ -850,13 +1128,15 @@ export const getChordTargets = (grid: CellData[][], r: number, c: number): { r: 
 
 // --- Reveal ---
 
-export const revealCellLogic = (
+export const revealCellFast = (
   grid: CellData[][],
   row: number,
   col: number,
   isFirstClick: boolean,
   isPraying: boolean,
   rng: () => number = Math.random,
+  observeAttempt?: (attempt: RearrangementAttempt) => void,
+  version: ReplayVersion = CURRENT_REPLAY_VERSION,
 ): { grid: CellData[][]; exploded: boolean; prayerConsumed: boolean } => {
   const newGrid = cloneGrid(grid);
   const cell = newGrid[row][col];
@@ -871,14 +1151,14 @@ export const revealCellLogic = (
     if (isPraying) {
       if (newGrid[row][col].isMine) {
         prayerConsumed = true;
-        // 重排失败时雷还在这格上：要么这颗雷挪不走，要么搜索预算用完。祈祷救不了，下面会爆炸。
-        rearrangeMines(newGrid, row, col, false, rng);
+        // 快速搜索失败时返回原雷位。调用方在确认祈祷结果前运行全盘兜底。
+        rearrangeMines(newGrid, row, col, false, rng, observeAttempt, version);
       } else {
         prayerConsumed = true;
       }
     } else {
       if (!newGrid[row][col].isMine) {
-        rearrangeMines(newGrid, row, col, true, rng);
+        rearrangeMines(newGrid, row, col, true, rng, observeAttempt);
       }
     }
   }
@@ -918,6 +1198,30 @@ export const revealCellLogic = (
   }
 
   return { grid: newGrid, exploded: false, prayerConsumed };
+};
+
+export type RevealResult = ReturnType<typeof revealCellFast>;
+
+// Called only after a failed fast prayer, with the board as it was before the click.
+export function completeExactPrayer(grid: CellData[][], row: number, col: number): RevealResult | null {
+  const mines = exactPrayerLayout(grid, row, col);
+  if (!mines) return null;
+  const board = cloneGrid(grid);
+  const width = board[0].length;
+  for (const line of board) {
+    for (const cell of line) cell.isMine = mines[cell.row * width + cell.col];
+  }
+  recountAllNeighborMines(board);
+  return revealCellFast(board, row, col, false, true);
+}
+
+export const revealCellLogic: typeof revealCellFast = (grid, row, col, first, prayer, rng, observe, version = CURRENT_REPLAY_VERSION) => {
+  if (version === 1) return revealCellFast(grid, row, col, first, prayer, rng, observe, version);
+  let attempt: RearrangementAttempt | undefined;
+  const fast = revealCellFast(grid, row, col, first, prayer, rng, observe && (event => { attempt = event; }), version);
+  const exact = prayer && fast.exploded ? completeExactPrayer(grid, row, col) : null;
+  if (attempt) observe?.(exact ? { kind: 'prayer', outcome: 'success' } : attempt);
+  return exact ?? fast;
 };
 
 // --- Game-over reveal ---

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 // 重排不变量：总雷数、旗子、已翻开数字、同一种子、祈祷抽样区间，以及离散正态的直方图。
 // 运行：cd server && npx ts-node --transpile-only src/test_csp_invariants.ts
 
@@ -7,10 +8,19 @@ import {
   createEmptyGrid,
   placeMines,
   rearrangeMines,
+  revealCellFast,
   revealCellLogic,
+  type RearrangementAttempt,
 } from '../../shared/gameLogic';
 import { CellData } from '../../shared/types';
 import { createRNG, hashSeed } from '../../shared/deterministicPlaceMines';
+import crossBlockPrayerFixtures from './fixtures/prayer-cross-block.json';
+import frontierRetryPrayerFixtures from './fixtures/prayer-frontier-retry.json';
+import boundedCompensationPrayerFixtures from './fixtures/prayer-bounded-compensation.json';
+import expandedPrayerSearchFixtures from './fixtures/prayer-expanded-search.json';
+import exactPrayerFixtures from './fixtures/prayer-exact.json';
+import { exactPrayerLayout, solveExactPrayer } from '../../shared/exactPrayer';
+import contradictoryPrayerFixtures from './fixtures/prayer-clue-contradictions.json';
 
 let pass = 0;
 let fail = 0;
@@ -204,6 +214,119 @@ function testConstrainedPrayerBackfill(): void {
   else if (grid[2][3].neighborMines !== around) no('回填不等于周围雷数', `${grid[2][3].neighborMines} vs ${around}`);
   else if (around < flaggedMinesAround(grid, 2, 3) || around > degree) no('k 不在可行区间', `k=${around}`);
   else ok('有约束祈祷的数字按真实雷数回填');
+}
+
+function testPrayerCanUseAnotherNumberAfterBudget(boardSeed: string, prayerSeed: string, row: number, col: number): void {
+  const label = `偏好数字耗尽后仍可祈祷成功（${prayerSeed}）`;
+  const boardRng = createRNG(hashSeed(boardSeed));
+  const placed = placeMines(createEmptyGrid(25, 25), 187, 12, 12, boardRng);
+  const { grid } = revealCellLogic(placed, 12, 12, true, false, boardRng);
+  for (const cell of grid.flat()) {
+    if (cell.status === 'hidden' && !cell.isMine && cell.neighborMines > 0 && boardRng() < 0.32) {
+      cell.status = 'revealed';
+    }
+  }
+
+  if (grid[row][col].status !== 'hidden' || !grid[row][col].isMine) {
+    no(label, '回归棋盘的目标格必须是未翻开的雷');
+    return;
+  }
+
+  const result = revealCellLogic(grid, row, col, false, true, createRNG(hashSeed(prayerSeed)));
+  const target = result.grid[row][col];
+  if (result.exploded || !result.prayerConsumed || target.isMine || target.status !== 'revealed') {
+    no(label, '未找到可开格的合法摆法');
+    return;
+  }
+  const shownNumbersUnchanged = grid.flat().every(cell =>
+    cell.status !== 'revealed' || result.grid[cell.row][cell.col].neighborMines === cell.neighborMines,
+  );
+  if (countMines(result.grid) !== 187 || !shownNumbersUnchanged || !revealedNumbersMatch(result.grid)) {
+    no(label, '兜底重排改变了总雷数或公开数字');
+    return;
+  }
+  ok(label);
+}
+
+function testPassiveShortageObservation(): void {
+  const makeBoard = (curse: boolean): CellData[][] => {
+    const grid = createEmptyGrid(8, 8);
+    for (const cell of grid.flat()) cell.status = 'flagged';
+    grid[1][1].status = grid[1][2].status = grid[1][3].status = 'hidden';
+    grid[2][1].status = grid[2][3].status = 'revealed';
+    grid[1][1].isMine = grid[1][3].isMine = curse;
+    grid[1][2].isMine = !curse;
+    fillCounts(grid);
+    return grid;
+  };
+
+  for (const kind of ['curse', 'prayer'] as const) {
+    const curse = kind === 'curse';
+    const board = makeBoard(curse);
+    const before = fingerprint(board);
+    const attempts: RearrangementAttempt[] = [];
+    const moved = rearrangeMines(board, 1, 2, curse, createRNG(41), attempt => attempts.push(attempt));
+    if (moved || fingerprint(board) !== before || attempts.length !== 1 ||
+        attempts[0].kind !== kind || attempts[0].outcome !== 'isolated_shortage') {
+      no('被动统计孤立格不足', `${kind}: ${JSON.stringify(attempts)}`);
+      return;
+    }
+  }
+
+  const forced = makeBoard(true);
+  forced[1][1].isMine = false;
+  fillCounts(forced);
+  const attempts: RearrangementAttempt[] = [];
+  const moved = rearrangeMines(forced, 1, 2, true, createRNG(41), attempt => attempts.push(attempt));
+  if (moved || attempts.length !== 1 || attempts[0].outcome !== 'unclassified') {
+    no('目标格不能翻转时不计为孤立格不足', JSON.stringify(attempts));
+    return;
+  }
+  ok('被动区分可翻转但补不平与目标格不能翻转');
+}
+
+function decodeFixture(cells: string[]): CellData[][] {
+  const board = createEmptyGrid(cells.length, cells[0].length);
+  cells.forEach((line, r) => [...line].forEach((marker, c) => {
+    const cell = board[r][c];
+    cell.isMine = marker === 'M' || marker === 'F';
+    cell.status = marker === 'O' ? 'revealed' : marker === 'F' || marker === 'f' ? 'flagged' : 'hidden';
+  }));
+  fillCounts(board);
+  return board;
+}
+
+function testPrayerFixtures(label: string, fixtures: typeof crossBlockPrayerFixtures, requireFallback = false): void {
+  for (const { seed, drawsBefore, row, col, cells } of fixtures) {
+    const name = `${label}（${seed}）`;
+    const board = decodeFixture(cells);
+    const expectedMines = Number(seed.split('-')[2]);
+    if (countMines(board) !== expectedMines || !board[row][col].isMine || board[row][col].status !== 'hidden') {
+      no(name, '回归棋盘的布雷或目标状态不正确');
+      continue;
+    }
+    const rng = createRNG(hashSeed(seed + '-csp'));
+    for (let i = 0; i < drawsBefore; i++) rng();
+
+    if (requireFallback && !revealCellFast(board, row, col, false, true, createRNG(rng.snapshot())).exploded) {
+      no(name, '此局未触发精确求解');
+      continue;
+    }
+
+    const result = revealCellLogic(board, row, col, false, true, rng);
+    const target = result.grid[row][col];
+    const shownNumbersUnchanged = board.flat().every(cell =>
+      cell.status !== 'revealed' || result.grid[cell.row][cell.col].neighborMines === cell.neighborMines,
+    );
+    if (result.exploded || !result.prayerConsumed || target.isMine || target.status !== 'revealed') {
+      no(name, '未找到可开格的合法摆法');
+    } else if (countMines(result.grid) !== expectedMines || !shownNumbersUnchanged ||
+        !revealedNumbersMatch(result.grid) || !flaggedMinesUnchanged(board, result.grid)) {
+      no(name, '重排改变了总雷数、公开数字或旗子雷位');
+    } else {
+      ok(name);
+    }
+  }
 }
 
 // 8×8、16 颗雷，密度 0.25。内格有 8 个邻居，μ = 密度 × 邻居数 = 2。
@@ -409,6 +532,86 @@ testFlaggedMineStays();
 testFlaggedFrontierMineStaysOnPrayer();
 testSameSeedMatches();
 testConstrainedPrayerBackfill();
+testPrayerCanUseAnotherNumberAfterBudget('frontier-365', 'action-365-17', 22, 17);
+// This fixture first finds a valid layout at branch 5,605 in the two-stage search.
+testPrayerCanUseAnotherNumberAfterBudget('frontier-680', 'action-680-0', 3, 22);
+testPassiveShortageObservation();
+testPrayerFixtures('小块补偿救回祈祷', crossBlockPrayerFixtures);
+testPrayerFixtures('扩展前沿救回祈祷', frontierRetryPrayerFixtures);
+testPrayerFixtures('受限补偿救回祈祷', boundedCompensationPrayerFixtures);
+testPrayerFixtures('扩大搜索范围救回祈祷', expandedPrayerSearchFixtures);
+testPrayerFixtures('全盘精确搜索救回祈祷', exactPrayerFixtures, true);
+for (const { seed, drawsBefore, row, col, cells } of contradictoryPrayerFixtures) {
+  const board = decodeFixture(cells);
+  const rng = createRNG(hashSeed(seed + '-csp'));
+  for (let i = 0; i < drawsBefore; i++) rng();
+  const fastRng = createRNG(rng.snapshot());
+  const fast = revealCellFast(board, row, col, false, true, fastRng);
+  const proof = solveExactPrayer(board, row, col);
+  const result = revealCellLogic(board, row, col, false, true, rng);
+  const name = `公开数字在回溯前证明祈祷无解（${seed}）`;
+  if (fast.exploded && proof.kind === 'clueContradiction' && result.exploded &&
+      result.prayerConsumed && rng.snapshot() === fastRng.snapshot()) ok(name);
+  else no(name, proof.kind);
+}
+testExactAgainstEnumeration();
+testVersionedPrayerReplay();
+
+function testVersionedPrayerReplay(): void {
+  // This click distinguishes all three histories, including random draws used before exact search.
+  const { cells, seed, drawsBefore, row, col } = exactPrayerFixtures.find(f => f.seed.endsWith('39921'))!;
+  const board = decodeFixture(cells);
+  const expected = {
+    1: '6ed328c8ba4f54629efbec3b5169594106cc94b28730d114f39bef5c3d2e2909',
+    2: 'd80169b335d84a7e8069914362ff2422de2567c31932076a03ecb852d737fc43',
+    3: 'e1a765d6baa509b0bf03e37bc51c94810aaace8e231f37d8f2679ab2311c9c25',
+  };
+  for (const version of [1, 2, 3] as const) {
+    const rng = createRNG(hashSeed(seed + '-csp'));
+    for (let i = 0; i < drawsBefore; i++) rng();
+    const result = revealCellLogic(board, row, col, false, true, rng, undefined, version);
+    const squares = result.grid.flat().map(c => [c.status, c.isMine, c.neighborMines, !!c.isExploded]);
+    const state = JSON.stringify([result.exploded, result.prayerConsumed, rng.snapshot(), squares]);
+    const name = `回放版本 ${version} 复现棋面和随机数进度`;
+    if (createHash('sha256').update(state).digest('hex') === expected[version]) ok(name);
+    else no(name, seed);
+  }
+}
+
+function testExactAgainstEnumeration(): void {
+  const name = '3×3 全盘兜底与独立枚举一致（含错旗与孤立格）';
+  const random = createRNG(93501);
+  for (let sample = 0; sample < 256; sample++) {
+    const board = createEmptyGrid(3, 3);
+    const cells = board.flat();
+    for (const cell of cells) {
+      cell.isMine = random() < 0.4;
+      if (random() < 0.2) cell.status = 'flagged';
+      else if (!cell.isMine && random() < 0.5) cell.status = 'revealed';
+    }
+    cells[0].isMine = true;
+    cells[0].status = 'hidden';
+    fillCounts(board);
+    const valid = (layout: boolean[]) => !layout[0] && layout.filter(Boolean).length === countMines(board)
+      && cells.every((cell, i) => {
+        if (cell.status === 'flagged') return layout[i] === cell.isMine;
+        if (cell.status === 'hidden') return true;
+        const adjacent = cells.filter((other, j) => layout[j] && other !== cell
+          && Math.abs(other.row - cell.row) <= 1 && Math.abs(other.col - cell.col) <= 1);
+        return !layout[i] && adjacent.length === cell.neighborMines;
+      });
+    let feasible = false;
+    for (let mask = 0; mask < 512 && !feasible; mask += 2) {
+      feasible = valid(cells.map((_, i) => Boolean(mask & (1 << i))));
+    }
+    const answer = exactPrayerLayout(board, 0, 0);
+    if (Boolean(answer) !== feasible || (answer && !valid(answer))) {
+      no(name, String(sample));
+      return;
+    }
+  }
+  ok(name);
+}
 testPrayerHistogramPeaksNearDensity();
 testZeroRegionFlood();
 testDeterministicCurseOnClone();

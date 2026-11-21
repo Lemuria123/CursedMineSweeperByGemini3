@@ -1,5 +1,8 @@
 // Shared types for both frontend (React) and backend (server replay verification)
 
+export const CURRENT_REPLAY_VERSION = 3;
+export type ReplayVersion = 1 | 2 | typeof CURRENT_REPLAY_VERSION;
+
 export type CellStatus = 'hidden' | 'revealed' | 'flagged';
 
 export interface CellData {
